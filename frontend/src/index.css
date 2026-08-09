@@ -1,0 +1,172 @@
+/* ============================================================
+   DSVP — Global Styles
+   Design tokens live in theme.js; this file owns resets,
+   typography, scrollbars, and utility classes.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── Reset ─────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 14px;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #f8fafc;
+  color: #1e293b;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── CSS Custom Properties ──────────────────────────────────── */
+:root {
+  --primary:        #1F4E79;
+  --primary-light:  #2563a8;
+  --primary-dark:   #163a5e;
+  --secondary:      #2E74B5;
+  --success:        #4CAF50;
+  --danger:         #E15759;
+  --accent:         #F2A93B;
+  --surface-light:  #DCE6F1;
+  --surface-muted:  #F7F7F7;
+  --surface-card:   #ffffff;
+  --text-primary:   #1e293b;
+  --text-secondary: #64748b;
+  --text-muted:     #94a3b8;
+  --border:         #e2e8f0;
+  --border-focus:   #2E74B5;
+  --shadow-sm:      0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:      0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+  --shadow-lg:      0 10px 15px rgba(0,0,0,.08), 0 4px 6px rgba(0,0,0,.05);
+  --shadow-xl:      0 20px 25px rgba(0,0,0,.1), 0 10px 10px rgba(0,0,0,.04);
+  --radius-sm:      6px;
+  --radius-md:      10px;
+  --radius-lg:      16px;
+  --radius-xl:      24px;
+  --radius-full:    9999px;
+  --sidebar-width:  240px;
+  --topbar-height:  60px;
+  --transition:     150ms ease;
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+p { color: var(--text-secondary); }
+
+a {
+  color: var(--secondary);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+a:hover { color: var(--primary); }
+
+code, pre {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 13px;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Form elements ──────────────────────────────────────────── */
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button { cursor: pointer; }
+
+/* ── Utility classes ────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* ── Trace line highlight (Monaco) ─────────────────────────── */
+.trace-line-highlight {
+  background: rgba(76, 175, 80, 0.12) !important;
+}
+.trace-line-gutter {
+  background: #4CAF50 !important;
+  width: 3px !important;
+  margin-left: 3px;
+}
+
+/* ── Error line highlight (Monaco) ──────────────────────────── */
+.error-line-highlight {
+  background: rgba(225, 87, 89, 0.12) !important;
+}
+.error-line-gutter {
+  background: #E15759 !important;
+  width: 3px !important;
+  margin-left: 3px;
+}
+
+/* ── Skeleton shimmer ───────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Fade-in animation ──────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 0.35s ease forwards; }
+
+/* ── Node animations (Visualization) ───────────────────────── */
+@keyframes nodeEnter {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes nodeExit {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.7); }
+}
+.node-enter { animation: nodeEnter 300ms ease-out forwards; }
+.node-exit  { animation: nodeExit  300ms ease-in  forwards; }
+
+/* ── Landing page gradient background ──────────────────────── */
+.hero-gradient {
+  background: linear-gradient(135deg, #0f2942 0%, #1F4E79 45%, #2E74B5 100%);
+}
+
+/* ── Glass card effect ──────────────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
