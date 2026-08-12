@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import ArrayVisualizer from './ArrayVisualizer';
 import CallStackPanel  from './CallStackPanel';
 
@@ -6,21 +7,84 @@ import CallStackPanel  from './CallStackPanel';
  * ────────────────────
  * Routes to the correct structure visualizer (left panel)
  * and always shows the CallStackPanel (right panel).
- *
- * FIX: traceGenerator.js now attaches callStack / currentFunc /
- * returningFrame / currentLine / locals / changedVars / sourceLine to
- * EVERY event (previously those fields were undefined, so CallStackPanel
- * always rendered an empty stack — only the array panel ever updated).
- * This component just needs to forward the fuller event to CallStackPanel.
+ * Now with resizable right panel!
  */
 export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
+  const [rightPanelWidth, setRightPanelWidth] = useState(320);
+  const [isResizing, setIsResizing] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e) => {
+      if (!containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newWidth = containerRect.right - e.clientX;
+      // Constrain between 200px and 600px
+      setRightPanelWidth(Math.max(200, Math.min(600, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  const handleMouseDown = (e) => {
+    setIsResizing(true);
+    e.preventDefault();
+  };
+
   if (!event) {
     return (
-      <div style={{ display: 'flex', height: '100%' }}>
+      <div 
+        ref={containerRef}
+        style={{ display: 'flex', height: '100%', userSelect: isResizing ? 'none' : 'auto' }}
+      >
         <div style={{ flex: 1 }}>
           <NoEventState moduleSlug={moduleSlug} />
         </div>
-        <div style={{ width: 280, flexShrink: 0 }}>
+        
+        {/* Resize Handle */}
+        <div
+          onMouseDown={handleMouseDown}
+          style={{
+            width: 4,
+            cursor: 'col-resize',
+            background: isResizing ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
+            transition: isResizing ? 'none' : 'background 150ms ease',
+            position: 'relative',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 20,
+            height: 40,
+            background: isResizing ? 'rgba(76,175,80,.3)' : 'transparent',
+            borderRadius: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 12,
+            color: '#8b949e',
+          }}>
+            ⋮
+          </div>
+        </div>
+
+        <div style={{ width: rightPanelWidth, flexShrink: 0 }}>
           <CallStackPanel
             callStack={[]}
             currentFunc={null}
@@ -40,7 +104,10 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
   // 'line' events only update the editor highlight — don't change array view
   // We pass all fields through; CallStackPanel handles call/return/line.
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div 
+      ref={containerRef}
+      style={{ display: 'flex', height: '100%', overflow: 'hidden', userSelect: isResizing ? 'none' : 'auto' }}
+    >
 
       {/* ── Left: array visualization ── */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
@@ -58,8 +125,40 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
         />
       </div>
 
+      {/* ── Resize Handle ── */}
+      <div
+        onMouseDown={handleMouseDown}
+        style={{
+          width: 4,
+          cursor: 'col-resize',
+          background: isResizing ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
+          transition: isResizing ? 'none' : 'background 150ms ease',
+          position: 'relative',
+          flexShrink: 0,
+          zIndex: 10,
+        }}
+      >
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 20,
+          height: 40,
+          background: isResizing ? 'rgba(76,175,80,.3)' : 'transparent',
+          borderRadius: 4,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 12,
+          color: '#8b949e',
+        }}>
+          ⋮
+        </div>
+      </div>
+
       {/* ── Right: call stack + live variables ── */}
-      <div style={{ width: 280, flexShrink: 0 }}>
+      <div style={{ width: rightPanelWidth, flexShrink: 0 }}>
         <CallStackPanel
           callStack={event.callStack           ?? []}
           currentFunc={event.currentFunc       ?? null}

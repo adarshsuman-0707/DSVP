@@ -9,7 +9,7 @@ const ModuleModel = {
     if (filter === 'premium') where += ' AND IsPremium = 1';
 
     const result = await request.query(`
-      SELECT ModuleId, Name, Slug, Category, Description, IsPremium, IconUrl, SortOrder
+      SELECT ModuleId, Name, Slug, Category, Description, IsPremium, IconUrl, SortOrder, RequiredPlan
       FROM dbo.Modules
       ${where}
       ORDER BY SortOrder ASC

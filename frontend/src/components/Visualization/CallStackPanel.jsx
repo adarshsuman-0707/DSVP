@@ -53,13 +53,15 @@ export default function CallStackPanel({
         {callStack.length === 0 ? (
           <EmptyHint text="Run your code to see the call stack" />
         ) : (
-          callStack.map((fn, idx) => {
+          callStack.map((frame, idx) => {
+            // Extract function name from frame object
+            const fnName = typeof frame === 'string' ? frame : (frame?.func || '?');
             const isTop        = idx === callStack.length - 1;
-            const isReturning  = returningFrame === fn && isTop;
-            const isModule     = fn === '<module>';
+            const isReturning  = returningFrame?.func === fnName && isTop;
+            const isModule     = fnName === '<module>';
             return (
               <div
-                key={`${fn}-${idx}`}
+                key={`${fnName}-${idx}`}
                 style={{
                   padding: '8px 12px', borderRadius: 8,
                   fontSize: 13, fontFamily: "'JetBrains Mono', monospace",
@@ -79,7 +81,7 @@ export default function CallStackPanel({
                   transition: 'all 180ms ease',
                 }}
               >
-                <span>{isModule ? '⌂ <module>' : `ƒ ${fn}()`}</span>
+                <span>{isModule ? '⌂ <module>' : `ƒ ${fnName}()`}</span>
                 {isReturning && (
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#ffb4a2', letterSpacing: '.04em' }}>
                     RETURNING ↩

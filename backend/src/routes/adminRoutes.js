@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const {
   getDashboard,
-  getUsers, updateUserRole, updateUserPremium, deleteUser,
+  getUsers, updateUserRole, updateUserPremium, updateUserSubscription, deleteUser,
   getModules, createModule, updateModule, deleteModule,
   getPayments,
   getFeedback, updateFeedbackStatus,
@@ -17,10 +17,11 @@ router.use(verifyToken, requireAdmin);
 router.get('/dashboard', getDashboard);
 
 // Users
-router.get   ('/users',                getUsers);
-router.patch ('/users/:id/role',       updateUserRole);
-router.patch ('/users/:id/premium',    updateUserPremium);
-router.delete('/users/:id',            deleteUser);
+router.get   ('/users',                   getUsers);
+router.patch ('/users/:id/role',          updateUserRole);
+router.patch ('/users/:id/premium',       updateUserPremium);
+router.patch ('/users/:id/subscription',  updateUserSubscription);
+router.delete('/users/:id',               deleteUser);
 
 // Modules
 router.get   ('/modules',              getModules);

@@ -29,6 +29,32 @@ export default function ArrayVisualizer({
   const [flashSet, setFlashSet] = useState(new Set());
   const prevStateRef = useRef([]);
 
+  // Resizable stdout height
+  const [stdoutHeight, setStdoutHeight] = useState(120);
+  const [isResizingStdout, setIsResizingStdout] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isResizingStdout) return;
+
+    const handleMouseMove = (e) => {
+      if (!containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newHeight = containerRect.bottom - e.clientY;
+      setStdoutHeight(Math.max(60, Math.min(400, newHeight)));
+    };
+
+    const handleMouseUp = () => setIsResizingStdout(false);
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingStdout]);
+
   useEffect(() => {
     const prev = prevStateRef.current;
     const changed = new Set();
@@ -48,12 +74,18 @@ export default function ArrayVisualizer({
   const isEmpty = arrayState.length === 0;
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column',
-      height: '100%', background: '#0d1117',
-      fontFamily: "'Inter', system-ui, sans-serif",
-      overflow: 'hidden',
-    }}>
+    <div
+      ref={containerRef}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        background: '#0d1117',
+        fontFamily: "'Inter', system-ui, sans-serif",
+        overflow: 'hidden',
+        userSelect: isResizingStdout ? 'none' : 'auto',
+      }}
+    >
 
       {/* ── header ── */}
       <div style={{
@@ -128,7 +160,44 @@ export default function ArrayVisualizer({
       )}
 
       {/* ── user output console ── */}
-      {userOutput && <OutputConsole output={userOutput} />}
+      {userOutput && (
+        <>
+          {/* Horizontal Resize Handle */}
+          <div
+            onMouseDown={() => setIsResizingStdout(true)}
+            style={{
+              height: 4,
+              cursor: 'row-resize',
+              background: isResizingStdout ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+              transition: isResizingStdout ? 'none' : 'background 150ms ease',
+              position: 'relative',
+              flexShrink: 0,
+              zIndex: 10,
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: 40,
+                height: 20,
+                background: isResizingStdout ? 'rgba(76,175,80,.3)' : 'transparent',
+                borderRadius: 4,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+                color: '#8b949e',
+              }}
+            >
+              ⋯
+            </div>
+          </div>
+          <OutputConsole output={userOutput} height={stdoutHeight} />
+        </>
+      )}
     </div>
   );
 }
@@ -290,24 +359,43 @@ function DescriptionBar({ description, step, totalSteps, type }) {
 }
 
 /* ── Output console ───────────────────────────────────────────────────── */
-function OutputConsole({ output }) {
+function OutputConsole({ output, height }) {
   return (
-    <div style={{
-      borderTop: '1px solid rgba(255,255,255,.07)',
-      flexShrink: 0, maxHeight: 120, overflowY: 'auto',
-    }}>
-      <div style={{
-        padding: '6px 20px 4px',
-        fontSize: 10, fontWeight: 700, color: '#8b949e',
-        textTransform: 'uppercase', letterSpacing: '.06em',
-        borderBottom: '1px solid rgba(255,255,255,.05)',
-      }}>stdout</div>
-      <pre style={{
-        margin: 0, padding: '8px 20px',
-        fontSize: 12, color: '#a3e635',
-        fontFamily: "'JetBrains Mono', monospace",
-        lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-      }}>{output}</pre>
+    <div
+      style={{
+        borderTop: '1px solid rgba(255,255,255,.07)',
+        flexShrink: 0,
+        height: height || 120,
+        overflowY: 'auto',
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 20px 4px',
+          fontSize: 10,
+          fontWeight: 700,
+          color: '#8b949e',
+          textTransform: 'uppercase',
+          letterSpacing: '.06em',
+          borderBottom: '1px solid rgba(255,255,255,.05)',
+        }}
+      >
+        stdout
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: '8px 20px',
+          fontSize: 12,
+          color: '#a3e635',
+          fontFamily: "'JetBrains Mono', monospace",
+          lineHeight: 1.6,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}
+      >
+        {output}
+      </pre>
     </div>
   );
 }

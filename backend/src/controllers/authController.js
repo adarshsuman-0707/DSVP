@@ -4,7 +4,12 @@ const UserModel = require('../models/userModel');
 
 function generateToken(user) {
   return jwt.sign(
-    { userId: user.UserId, role: user.Role },
+    { 
+      userId: user.UserId, 
+      role: user.Role,
+      subscriptionPlan: user.SubscriptionPlan || 'free',
+      premiumModulesAccess: user.PremiumModulesAccess ? JSON.parse(user.PremiumModulesAccess) : []
+    },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
@@ -59,6 +64,9 @@ async function login(req, res, next) {
         Email: user.Email,
         Role: user.Role,
         IsPremium: user.IsPremium,
+        SubscriptionPlan: user.SubscriptionPlan || 'free',
+        SubscriptionExpiry: user.SubscriptionExpiry,
+        PremiumModulesAccess: user.PremiumModulesAccess ? JSON.parse(user.PremiumModulesAccess) : []
       },
       token,
     });

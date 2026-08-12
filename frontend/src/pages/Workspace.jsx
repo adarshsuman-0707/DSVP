@@ -317,33 +317,22 @@ export default function Workspace() {
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
 
         {/* Editor panel */}
-        <div style={{
-          flex: 1, display: 'flex', flexDirection: 'column',
-          borderRight: '1px solid rgba(255,255,255,.07)', minWidth: 0,
-        }}>
-          <PanelLabel>Editor</PanelLabel>
-          <CodeEditor
-            language={language}
-            value={code}
-            onChange={v => { setCode(v ?? ''); }}
-            currentLine={editorCurrentLine}
-            errorLine={errorLine}
-            errorMessage={errorMessage}
-            disabled={isPlaying}
-          />
-        </div>
+        <EditorPanel
+          language={language}
+          code={code}
+          setCode={setCode}
+          editorCurrentLine={editorCurrentLine}
+          errorLine={errorLine}
+          errorMessage={errorMessage}
+          isPlaying={isPlaying}
+        />
 
         {/* Visualization panel */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <PanelLabel>Visualization</PanelLabel>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <VisualizationCanvas
-              moduleSlug={moduleSlug}
-              event={currentEvent}
-              totalSteps={events.length}
-            />
-          </div>
-        </div>
+        <VisualizationPanel
+          moduleSlug={moduleSlug}
+          currentEvent={currentEvent}
+          totalSteps={events.length}
+        />
       </div>
 
       {/* ── PLAYBACK BAR ── */}
@@ -394,5 +383,108 @@ function SpinnerIcon() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
     </svg>
+  );
+}
+
+/* ── Resizable Panels ── */
+function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, isPlaying }) {
+  const [editorWidth, setEditorWidth] = useState(50); // Percentage
+  const [isResizing, setIsResizing] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e) => {
+      if (!containerRef.current) return;
+      const parentRect = containerRef.current.parentElement.getBoundingClientRect();
+      const newWidth = ((e.clientX - parentRect.left) / parentRect.width) * 100;
+      setEditorWidth(Math.max(20, Math.min(80, newWidth)));
+    };
+
+    const handleMouseUp = () => setIsResizing(false);
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  return (
+    <>
+      <div
+        ref={containerRef}
+        style={{
+          width: `${editorWidth}%`,
+          display: 'flex',
+          flexDirection: 'column',
+          minWidth: 0,
+          userSelect: isResizing ? 'none' : 'auto',
+        }}
+      >
+        <PanelLabel>Editor</PanelLabel>
+        <CodeEditor
+          language={language}
+          value={code}
+          onChange={v => { setCode(v ?? ''); }}
+          currentLine={editorCurrentLine}
+          errorLine={errorLine}
+          errorMessage={errorMessage}
+          disabled={isPlaying}
+        />
+      </div>
+
+      {/* Vertical Resize Handle */}
+      <div
+        onMouseDown={() => setIsResizing(true)}
+        style={{
+          width: 4,
+          cursor: 'col-resize',
+          background: isResizing ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+          transition: isResizing ? 'none' : 'background 150ms ease',
+          position: 'relative',
+          flexShrink: 0,
+          zIndex: 10,
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 20,
+            height: 40,
+            background: isResizing ? 'rgba(76,175,80,.3)' : 'transparent',
+            borderRadius: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 12,
+            color: '#8b949e',
+          }}
+        >
+          ⋮
+        </div>
+      </div>
+    </>
+  );
+}
+
+function VisualizationPanel({ moduleSlug, currentEvent, totalSteps }) {
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <PanelLabel>Visualization</PanelLabel>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <VisualizationCanvas
+          moduleSlug={moduleSlug}
+          event={currentEvent}
+          totalSteps={totalSteps}
+        />
+      </div>
+    </div>
   );
 }

@@ -37,6 +37,8 @@ export const getAdminAnalytics  = (days = 7)    => api.get(`/admin/analytics?day
 export const getAdminUsers      = (p = {})      => api.get('/admin/users',    { params: p });
 export const updateUserRole     = (id, role)    => api.patch(`/admin/users/${id}/role`,    { role });
 export const updateUserPremium  = (id, v)       => api.patch(`/admin/users/${id}/premium`, { isPremium: v });
+export const updateUserSubscription = (id, plan, moduleAccess) => 
+  api.patch(`/admin/users/${id}/subscription`, { plan, moduleAccess });
 export const deleteAdminUser    = (id)          => api.delete(`/admin/users/${id}`);
 
 // -------- Admin — Modules --------

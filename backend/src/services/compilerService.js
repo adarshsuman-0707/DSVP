@@ -280,7 +280,8 @@ async function runJava(code) {
   fs.writeFileSync(srcFile, fullCode, 'utf8');
 
   try {
-    await execFileAsync(javac, [srcFile], { timeout: TIMEOUT_MS, cwd: tmpDir });
+    // Compile with verbose diagnostics to get full error messages
+    await execFileAsync(javac, ['-Xdiags:verbose', srcFile], { timeout: TIMEOUT_MS, cwd: tmpDir });
     const { stdout, stderr } = await execFileAsync(java, ['-cp', tmpDir, 'Main'], {
       timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, cwd: tmpDir,
     });
@@ -342,6 +343,43 @@ function extractJavaImports(code) {
 function instrumentJava(code) {
   if (code.includes('DSVPArray')) return { instrumented: code, arrayNames: [] };
 
+  // Step 0: Normalize class name to "Main" so we can always run "java Main"
+  // Find the main class (the one with public static void main)
+  // Look for the class that contains the main method
+  const lines = code.split('\n');
+  let mainClassName = null;
+  let inClass = null;
+  let braceDepth = 0;
+  
+  for (const line of lines) {
+    // Track class declarations
+    const classMatch = line.match(/\bclass\s+(\w+)/);
+    if (classMatch && braceDepth === 0) {
+      inClass = classMatch[1];
+    }
+    
+    // Check for main method
+    if (inClass && line.includes('public static void main')) {
+      mainClassName = inClass;
+      break;
+    }
+    
+    // Track brace depth
+    braceDepth += (line.match(/\{/g) || []).length;
+    braceDepth -= (line.match(/\}/g) || []).length;
+    
+    // Reset class tracking if we exit a class
+    if (braceDepth === 0) inClass = null;
+  }
+  
+  if (mainClassName && mainClassName !== 'Main') {
+    // Replace the class name with Main
+    code = code.replace(
+      new RegExp(`\\bclass\\s+${mainClassName}\\b`, 'g'),
+      'class Main'
+    );
+  }
+
   // Step 1: discover all int[] variable names declared in this code
   const arrayNames = new Set();
   const declPattern = /\bint\s*\[\s*\]\s+(\w+)\s*[=;({]/g;
@@ -364,20 +402,41 @@ function instrumentJava(code) {
   let out = code;
 
   // Step 2: rewrite declarations
-  // int[] name = {v1, v2, ...};
+  // Style 1: int[] name = {v1, v2, ...};
   for (const name of names) {
     out = out.replace(
       new RegExp(`int\\s*\\[\\s*\\]\\s+${name}\\s*=\\s*\\{([^}]*)\\}\\s*;`, 'g'),
       (_, vals) => `DSVPArray ${name} = new DSVPArray(new int[]{${vals}});`
     );
-    // int[] name = new int[expr];
+    // Style 2: int name[] = {v1, v2, ...};
+    out = out.replace(
+      new RegExp(`\\bint\\s+${name}\\s*\\[\\s*\\]\\s*=\\s*\\{([^}]*)\\}\\s*;`, 'g'),
+      (_, vals) => `DSVPArray ${name} = new DSVPArray(new int[]{${vals}});`
+    );
+  }
+  
+  // int[] name = new int[expr];
+  for (const name of names) {
     out = out.replace(
       new RegExp(`int\\s*\\[\\s*\\]\\s+${name}\\s*=\\s*new\\s+int\\s*\\[([^\\]]+)\\]\\s*;`, 'g'),
       (_, size) => `DSVPArray ${name} = new DSVPArray(${size.trim()});`
     );
-    // int[] name;  (declaration only, no init)
+    // int name[] = new int[expr];
+    out = out.replace(
+      new RegExp(`\\bint\\s+${name}\\s*\\[\\s*\\]\\s*=\\s*new\\s+int\\s*\\[([^\\]]+)\\]\\s*;`, 'g'),
+      (_, size) => `DSVPArray ${name} = new DSVPArray(${size.trim()});`
+    );
+  }
+  
+  // int[] name;  (declaration only, no init)
+  for (const name of names) {
     out = out.replace(
       new RegExp(`int\\s*\\[\\s*\\]\\s+${name}\\s*;`, 'g'),
+      `DSVPArray ${name};`
+    );
+    // int name[];  (declaration only, no init)
+    out = out.replace(
+      new RegExp(`\\bint\\s+${name}\\s*\\[\\s*\\]\\s*;`, 'g'),
       `DSVPArray ${name};`
     );
   }
@@ -415,16 +474,78 @@ function instrumentJava(code) {
     out = out.replace(new RegExp(`\\b${name}\\.length\\b`, 'g'), `${name}.size()`);
   }
 
+  // Step 6.5: Arrays.toString(name) → name.toString()
+  // User code often uses Arrays.toString(arr) for debugging
+  // DSVPArray has its own toString() method, so convert the call
+  for (const name of names) {
+    out = out.replace(
+      new RegExp(`Arrays\\.toString\\s*\\(\\s*${name}\\s*\\)`, 'g'),
+      `${name}.toString()`
+    );
+  }
+
+  // Step 6.6: System.out.println(name) - ensure toString() is called
+  // When printing DSVPArray directly, Java needs explicit toString()
+  for (const name of names) {
+    // Match println(name) but not println(name.something) or println(name[...])
+    out = out.replace(
+      new RegExp(`(System\\.out\\.print(?:ln)?\\s*\\(\\s*)${name}(\\s*[,)])`, 'g'),
+      `$1${name}.toString()$2`
+    );
+  }
+  
+  // Step 6.7: Arrays.copyOf(name, length) → new DSVPArray(Arrays.copyOf(name.raw(), length))
+  // User code often uses Arrays.copyOf(arr, newLength) to resize/copy arrays
+  // DSVPArray has a raw() method that returns the underlying int[], so we:
+  // 1. Call name.raw() to get the int[]
+  // 2. Use Arrays.copyOf on that
+  // 3. Wrap result in new DSVPArray to maintain instrumentation
+  for (const name of names) {
+    out = out.replace(
+      new RegExp(`Arrays\\.copyOf\\s*\\(\\s*${name}\\s*,\\s*([^)]+)\\)`, 'g'),
+      `new DSVPArray(Arrays.copyOf(${name}.raw(), $1))`
+    );
+  }
+
+  // Step 6.8: Handle assignments from DSVPArray.get() to int variables
+  // When result = arr.get(i), we want: int result = arr.get(i); (already works)
+  // But when calling methods like: int result = linearSearch(arr, target);
+  // The method signature needs to accept DSVPArray, which is handled in Step 7.5
+  // No additional transformation needed here - just documenting the flow.
+
   // Step 7: fix method signatures that had  int[] paramName  — these are
   // parameters, not local declarations. The user's methods that accept arrays
   // should receive DSVPArray instead. Rewrite method signatures.
   // Pattern: public/private/protected/static ... method(...int[] paramName...)
+  // Handles both styles: int[] name and int name[]
+  // IMPORTANT: Must handle parameters in ALL positions:
+  // - Last param: void f(int[] arr)
+  // - Middle param: void f(int[] arr, int n)
+  // - First param: void f(int n, int[] arr)
   for (const name of names) {
+    // Style 1: int[] name (followed by comma, paren, or nothing before paren)
     out = out.replace(
-      new RegExp(`int\\s*\\[\\s*\\]\\s+${name}(?=\\s*[,)])`, 'g'),
+      new RegExp(`int\\s*\\[\\s*\\]\\s+${name}(?=\\s*[,)\\{])`, 'g'),
+      `DSVPArray ${name}`
+    );
+    // Style 2: int name[] (followed by comma, paren, or brace)
+    out = out.replace(
+      new RegExp(`\\bint\\s+${name}\\s*\\[\\s*\\](?=\\s*[,)\\{])`, 'g'),
       `DSVPArray ${name}`
     );
   }
+  
+  // Step 7.5: Also handle int[] as return types in method declarations
+  // Pattern: int[] methodName(...) → DSVPArray methodName(...)
+  // This ensures methods returning arrays use DSVPArray consistently
+  out = out.replace(
+    /\b((?:public|private|protected|static|final|synchronized)\s+)*int\s*\[\s*\]\s+(\w+)\s*\(/g,
+    '$1DSVPArray $2('
+  );
+  out = out.replace(
+    /\b((?:public|private|protected|static|final|synchronized)\s+)*int\s+(\w+)\s*\[\s*\]\s*\(/g,
+    '$1DSVPArray $2('
+  );
 
   // Step 8: inject call/return tracing into user-defined methods
   out = injectJavaCallTrace(out);
@@ -433,75 +554,183 @@ function instrumentJava(code) {
 }
 
 /**
- * Inject DSVPArray.traceCall() at the start of every user method body
- * and DSVPArray.traceReturn() before every return statement.
+ * Java source-level call/line/return injection.
  *
- * Targets: any  public/private/protected/static ... methodName(...) {
- * Skips: main(), constructors (class name = Main)
+ * For every non-main user method:
+ *  1. Inject DSVPArray.traceCall(name, argsJson) at method entry
+ *  2. Inject DSVPArray.traceLine(name, lineNo, localsJson) before each
+ *     meaningful statement (assignments, if, while, for, return)
+ *  3. Replace  return expr;  with a traced version that emits traceReturn
+ *
+ * Works line-by-line on the source text so line numbers match user's code.
  */
+
 function injectJavaCallTrace(code) {
-  // Match method declarations:  modifier* returnType methodName(params) {
-  // We use a regex that finds the opening brace of a method.
-  const METHOD_RE = /\b(public|private|protected|static|\s)+\s+([\w<>\[\]]+)\s+(\w+)\s*\(([^)]*)\)\s*\{/g;
+  const lines  = code.split('\n');
+  const result = [];
 
-  let out = code;
-  let offset = 0;
-  let m;
+  let insideMethod     = false;
+  let methodName       = '';
+  let methodParams     = '';
+  let braceDepth       = 0;
+  let methodStartDepth = 0;
 
-  // Collect matches first (regex state is reset after replace)
-  const matches = [];
-  while ((m = METHOD_RE.exec(code)) !== null) {
-    const methodName = m[3];
-    if (methodName === 'main' || methodName === 'Main') continue; // skip entry point
-    matches.push({
-      index:      m.index + offset,
-      fullMatch:  m[0],
-      methodName,
-      params:     m[4].trim(),
-    });
+  // Tracks all primitive/String local variables seen so far in the current method
+  // Maps varName → { type: string, declaredAtLine: number }
+  // e.g.  { max: {type:'int', declaredAtLine:5}, min: {type:'int', declaredAtLine:6} }
+  let declaredVars = {};
+
+  // Types we can safely call String.valueOf() on
+  const TRACEABLE_TYPES = new Set(['int','long','double','float','short','byte','boolean','char','String','Integer','Long','Double','Float']);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line    = lines[i];
+    const trimmed = line.trim();
+    const lineNo  = i + 1;
+
+    const openBraces  = (line.match(/\{/g) || []).length;
+    const closeBraces = (line.match(/\}/g) || []).length;
+
+    // ── Outside any tracked method ──────────────────────────────────────
+    if (!insideMethod) {
+      const sig = line.match(
+        /^\s*(?:(?:public|private|protected|static|final|synchronized)\s+)*[\w<>\[\],\s]+?\s+(\w+)\s*\(([^)]*)\)\s*(?:throws\s+[\w,\s]+)?\s*\{/
+      );
+      if (sig) {
+        const mName = sig[1];
+        if (mName !== 'main' && mName !== 'Main' && mName !== 'DSVPArray') {
+          insideMethod     = true;
+          methodName       = mName;
+          methodParams     = sig[2] || '';
+          methodStartDepth = braceDepth;
+          braceDepth      += openBraces - closeBraces;
+          declaredVars     = {};  // reset per method
+
+          // Seed params into declaredVars (params are declared at line 0, always in scope)
+          methodParams.split(',').map(p => p.trim()).filter(Boolean).forEach(p => {
+            const parts = p.split(/\s+/).filter(Boolean);
+            if (parts.length >= 2) {
+              const type  = parts[parts.length - 2].replace(/[\[\]]/g, '');
+              const pname = parts[parts.length - 1].replace(/[\[\]]/g, '');
+              if (pname && TRACEABLE_TYPES.has(type)) {
+                declaredVars[pname] = { type, declaredAtLine: 0 };
+              }
+            }
+          });
+
+          // Build args JSON using declared params
+          const paramPairs = Object.keys(declaredVars).map(
+            k => `"\\"${k}\\":\\"" + String.valueOf(${k}) + "\\""`
+          );
+          const argsJson = paramPairs.length
+            ? '"{" + ' + paramPairs.join(' + "," + ') + ' + "}"'
+            : '"{}"';
+
+          result.push(line);
+          result.push(`        DSVPArray.traceCall("${mName}", ${argsJson});`);
+          continue;
+        }
+      }
+      braceDepth += openBraces - closeBraces;
+      result.push(line);
+      continue;
+    }
+
+    // ── Inside a tracked method ──────────────────────────────────────────
+    braceDepth += openBraces - closeBraces;
+
+    if (braceDepth <= methodStartDepth) {
+      insideMethod = false;
+      declaredVars = {};
+      result.push(line);
+      continue;
+    }
+
+    // ── Detect new variable declarations at method body level ──────────────
+    // ONLY track variables declared in method body (not inside for/while/if)
+    // Skip lines that start with 'for' — those declare loop-scoped variables
+    // ONLY track variables that are INITIALIZED (have = in declaration)
+    const isForLoop = trimmed.startsWith('for');
+    const declMatch = !isForLoop && trimmed.match(
+      /^(int|long|double|float|short|byte|boolean|char|String|Integer|Long|Double|Float)\s+([\w\s,=\-\d.()+*\/]+?)(?:[=;]|$)/
+    );
+    
+    if (declMatch && !trimmed.startsWith('DSVPArray') && !trimmed.startsWith('//')) {
+      const type  = declMatch[1];
+      const rest  = declMatch[2];
+      // Extract variable names (before any = or ,)
+      // ONLY track if the declaration includes initialization (contains =)
+      rest.split(',').forEach(part => {
+        const trimmedPart = part.trim();
+        // Only track if this part has an = sign (initialization)
+        if (trimmedPart.includes('=')) {
+          const name = trimmedPart.split('=')[0].trim().replace(/[\[\]]/g, '');
+          if (name && /^[a-zA-Z_]\w*$/.test(name) && !declaredVars[name]) {
+            declaredVars[name] = { type, declaredAtLine: lineNo };
+          }
+        }
+      });
+    }
+
+    // Skip blank, pure-brace, comment, already-injected lines
+    // ALSO skip if this line is part of a single-line control structure body
+    const isSingleLineBody = (
+      i > 0 && 
+      !trimmed.startsWith('{') &&
+      (lines[i-1].trim().match(/^(for|while|if)\s*\([^)]+\)\s*$/) ||
+       lines[i-1].trim().match(/^}\s*else\s*$/))
+    );
+    
+    const skip = !trimmed
+      || trimmed === '{' || trimmed === '}'
+      || trimmed.startsWith('//')
+      || trimmed.startsWith('*')
+      || trimmed.startsWith('DSVPArray.trace')
+      || isSingleLineBody;
+
+    if (!skip) {
+      // Build locals JSON ONLY from variables declared BEFORE this line
+      // Use <= to exclude variables declared on THIS line (they're not initialized yet)
+      const visibleVars = Object.keys(declaredVars).filter(
+        k => declaredVars[k].declaredAtLine < lineNo
+      );
+      
+      const localPairs = visibleVars.map(
+        k => `"\\"${k}\\":\\"" + String.valueOf(${k}) + "\\""`
+      );
+      const localsJson = localPairs.length
+        ? '"{" + ' + localPairs.join(' + "," + ') + ' + "}"'
+        : '"{}"';
+
+      result.push(`        DSVPArray.traceLine("${methodName}", ${lineNo}, ${localsJson});`);
+    }
+
+    // return expr;  →  traced return (no double-eval: emit before return)
+    if (/^\s*return\s+/.test(line) && !line.includes('traceReturn')) {
+      const m = line.match(/^(\s*)return\s+([^;]+);(.*)$/);
+      if (m) {
+        const [, indent, retExpr, tail] = m;
+        const safe = retExpr.trim();
+        result.push(`${indent}DSVPArray.traceReturn("${methodName}", String.valueOf(${safe}), "{}");`);
+        result.push(`${indent}return ${safe};${tail || ''}`);
+        continue;
+      }
+    }
+
+    // return;  →  traced void return
+    if (/^\s*return\s*;/.test(line) && !line.includes('traceReturn')) {
+      const m = line.match(/^(\s*)return\s*;(.*)$/);
+      if (m) {
+        result.push(`${m[1]}DSVPArray.traceReturn("${methodName}", "void", "{}");`);
+        result.push(`${m[1]}return;${m[2] || ''}`);
+        continue;
+      }
+    }
+
+    result.push(line);
   }
 
-  // Process in reverse so offsets stay valid
-  matches.reverse().forEach(({ index, fullMatch, methodName, params }) => {
-    // Build args JSON: {"paramName": String.valueOf(paramName), ...}
-    const paramList = params
-      ? params.split(',').map(p => p.trim()).filter(Boolean).map(p => {
-          const parts = p.split(/\s+/);
-          const pname = parts[parts.length - 1].replace(/[[\]]/g, '');
-          return `"\\"${pname}\\":\\""+String.valueOf(${pname})+"\\""`;
-        })
-      : [];
-    const argsJson = paramList.length
-      ? '"{"+' + paramList.join('+","+') + '+"}"'
-      : '"{}"';
-
-    // Locals JSON (simplified: use toString on known variables)
-    const localsJson = '"{}"';
-
-    const callInject = `\n        DSVPArray.traceCall("${methodName}", ${argsJson});`;
-
-    // Insert after the opening brace
-    const insertPos = index + fullMatch.length;
-    out = out.slice(0, insertPos) + callInject + out.slice(insertPos);
-  });
-
-  // Now inject traceReturn before every return statement that has a value
-  // Handle:  return expr;  (has value)
-  out = out.replace(
-    /\breturn\s+([^;{}]+);/g,
-    (match, retExpr) => {
-      if (retExpr.includes('traceReturn') || retExpr.includes('_dsvp_ret')) return match;
-      const trimmed = retExpr.trim();
-      // For simple expressions, inline directly to avoid type issues
-      return `{ DSVPArray.traceReturn("?", String.valueOf(${trimmed}), "{}"); return ${trimmed}; }`;
-    }
-  );
-  // Handle bare:  return;  (void)
-  out = out.replace(/\breturn\s*;/g, match => {
-    return `{ DSVPArray.traceReturn("?", "void", "{}"); return; }`;
-  });
-
-  return out;
+  return result.join('\n');
 }
 
 
@@ -622,7 +851,7 @@ async function runCode({ language, code }) {
   return runner(code);
 }
 
-module.exports = { runCode };
+
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -681,6 +910,24 @@ function isCompileError(stderr, language) {
 
 function sanitizeError(stderr, language) {
   if (!stderr) return 'An unknown error occurred.';
+  
+  // For Java, keep more context and clean up paths more carefully
+  if (language === 'java') {
+    return stderr
+      .split('\n')
+      .map(l => l
+        // Replace temp directory paths with 'Main.java' for clarity
+        .replace(/[A-Z]:\\[^\s:]+dsvp[^\s:]*\\Main\.java/gi, 'Main.java')
+        .replace(/\/tmp\/dsvp[^\s:]*\/Main\.java/g, 'Main.java')
+        // Keep full error context for Java
+        .trim()
+      )
+      .filter(Boolean)
+      .slice(0, 30)  // More lines for Java compilation errors
+      .join('\n');
+  }
+  
+  // Original handling for other languages
   return stderr
     .split('\n')
     .filter(l => l.trim())
@@ -719,3 +966,5 @@ function safeUnlink(f) {
 function safeRmDir(d) {
   try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {}
 }
+
+module.exports = { runCode };

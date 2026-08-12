@@ -33,7 +33,12 @@ export default function ModuleCatalog() {
   }, [filter]);
 
   function handleCardClick(m) {
-    if (m.IsPremium) return; // locked — don't navigate
+    // If premium and user doesn't have access, redirect to pricing
+    if (m.IsPremium && !m.HasAccess) {
+      navigate('/pricing');
+      return;
+    }
+    // Otherwise navigate to workspace
     navigate(`/workspace?module=${m.Slug}`);
   }
 
@@ -108,7 +113,7 @@ export default function ModuleCatalog() {
 function ModuleCard({ module: m, onClick }) {
   const [hovered, setHovered] = useState(false);
   const icon = STRUCT_ICONS[m.Slug] || '◈';
-  const locked = !!m.IsPremium;
+  const locked = m.IsPremium && !m.HasAccess;
 
   return (
     <div
@@ -117,14 +122,14 @@ function ModuleCard({ module: m, onClick }) {
       onMouseLeave={() => setHovered(false)}
       style={{
         background: locked ? '#fafaf9' : '#fff',
-        border: `1.5px solid ${hovered && !locked ? '#2E74B5' : '#e2e8f0'}`,
+        border: `1.5px solid ${hovered ? '#2E74B5' : '#e2e8f0'}`,
         borderRadius: 16,
         padding: '24px 22px',
-        cursor: locked ? 'default' : 'pointer',
-        opacity: locked ? 0.75 : 1,
+        cursor: 'pointer', // Always clickable now
+        opacity: locked ? 0.85 : 1,
         transition: 'all 200ms',
-        transform: hovered && !locked ? 'translateY(-3px)' : 'none',
-        boxShadow: hovered && !locked
+        transform: hovered ? 'translateY(-3px)' : 'none',
+        boxShadow: hovered
           ? '0 8px 24px rgba(46,116,181,.14)'
           : '0 1px 4px rgba(0,0,0,.06)',
         position: 'relative', overflow: 'hidden',
@@ -175,10 +180,10 @@ function ModuleCard({ module: m, onClick }) {
       {/* footer */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{
-          fontSize: 11, fontWeight: 600, color: locked ? '#94a3b8' : '#2E74B5',
+          fontSize: 11, fontWeight: 600, color: locked ? '#F2A93B' : '#2E74B5',
           textTransform: 'uppercase', letterSpacing: '.05em',
         }}>
-          {locked ? 'Upgrade to unlock' : 'Open module →'}
+          {locked ? '🔓 Upgrade to unlock →' : 'Open module →'}
         </span>
         {!locked && m.Progress > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

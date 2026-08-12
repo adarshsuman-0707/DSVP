@@ -6,6 +6,7 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Workspace from './pages/Workspace';
+import Pricing from './pages/Pricing';
 import ModuleCatalog from './components/ModuleCatalog/ModuleCatalog';
 import AdminDashboard from './components/AdminDashboard/AdminDashboard';
 
@@ -32,6 +33,9 @@ export default function App() {
           } />
           <Route path="/workspace" element={
             <ProtectedRoute><Workspace /></ProtectedRoute>
+          } />
+          <Route path="/pricing" element={
+            <ProtectedRoute><Pricing /></ProtectedRoute>
           } />
 
           {/* admin only */}
