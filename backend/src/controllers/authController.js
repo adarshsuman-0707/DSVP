@@ -1,7 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const UserModel = require('../models/userModel');
+const { sql, getPool } = require('../config/db');
+const { sendOtpEmail } = require('../services/emailService');
 
+/* ── helpers ── */
 function generateToken(user) {
   return jwt.sign(
     { 
@@ -85,4 +88,175 @@ async function me(req, res, next) {
   }
 }
 
-module.exports = { register, login, me };
+/* ═══════════════════════════════════════════════════════════
+   FORGOT PASSWORD — STEP 1: Send OTP
+   POST /api/auth/forgot-password/send-otp
+   body: { email }
+   ═══════════════════════════════════════════════════════════ */
+async function sendOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check user exists
+    const user = await UserModel.findByEmail(normalizedEmail);
+    if (!user) {
+      // Don't reveal whether email exists — send same response
+      return res.json({ message: 'If this email is registered, an OTP has been sent.' });
+    }
+
+    const pool = await getPool();
+
+    // Invalidate any previous unused OTPs for this email
+    await pool.request()
+      .input('Email', sql.NVarChar(255), normalizedEmail)
+      .query(`UPDATE dbo.PasswordResetOtp SET Used = 1 WHERE Email = @Email AND Used = 0`);
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresMin = parseInt(process.env.OTP_EXPIRES_MIN || '10');
+    const expiresAt  = new Date(Date.now() + expiresMin * 60 * 1000);
+
+    // Store OTP in DB
+    await pool.request()
+      .input('Email',     sql.NVarChar(255), normalizedEmail)
+      .input('OtpCode',   sql.VarChar(6),    otp)
+      .input('ExpiresAt', sql.DateTime2,     expiresAt)
+      .query(`
+        INSERT INTO dbo.PasswordResetOtp (Email, OtpCode, ExpiresAt)
+        VALUES (@Email, @OtpCode, @ExpiresAt)
+      `);
+
+    // Send email
+    await sendOtpEmail(normalizedEmail, otp, expiresMin);
+
+    res.json({ message: 'If this email is registered, an OTP has been sent.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FORGOT PASSWORD — STEP 2: Verify OTP
+   POST /api/auth/forgot-password/verify-otp
+   body: { email, otp }
+   ═══════════════════════════════════════════════════════════ */
+async function verifyOtp(req, res, next) {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const pool = await getPool();
+
+    const result = await pool.request()
+      .input('Email',   sql.NVarChar(255), normalizedEmail)
+      .input('OtpCode', sql.VarChar(6),    otp.trim())
+      .query(`
+        SELECT TOP 1 OtpId, ExpiresAt, Used
+        FROM dbo.PasswordResetOtp
+        WHERE Email = @Email AND OtpCode = @OtpCode
+        ORDER BY CreatedAt DESC
+      `);
+
+    if (!result.recordset.length) {
+      return res.status(400).json({ message: 'Invalid OTP. Please check and try again.' });
+    }
+
+    const record = result.recordset[0];
+
+    if (record.Used) {
+      return res.status(400).json({ message: 'This OTP has already been used.' });
+    }
+
+    if (new Date(record.ExpiresAt) < new Date()) {
+      return res.status(400).json({ message: 'OTP has expired. Please request a new one.' });
+    }
+
+    // OTP is valid — issue a short-lived reset token (don't mark used yet, reset step will do that)
+    const resetToken = jwt.sign(
+      { email: normalizedEmail, otpId: record.OtpId, purpose: 'password_reset' },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    res.json({
+      message: 'OTP verified successfully.',
+      resetToken,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FORGOT PASSWORD — STEP 3: Reset Password
+   POST /api/auth/forgot-password/reset
+   body: { resetToken, newPassword }
+   ═══════════════════════════════════════════════════════════ */
+async function resetPassword(req, res, next) {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({ message: 'Reset token and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    // Verify reset token
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+    } catch {
+      return res.status(400).json({ message: 'Reset token is invalid or expired. Please start over.' });
+    }
+
+    if (decoded.purpose !== 'password_reset') {
+      return res.status(400).json({ message: 'Invalid token purpose.' });
+    }
+
+    const pool = await getPool();
+
+    // Verify OTP record is still unused
+    const otpCheck = await pool.request()
+      .input('OtpId', sql.Int, decoded.otpId)
+      .query(`SELECT Used FROM dbo.PasswordResetOtp WHERE OtpId = @OtpId`);
+
+    if (!otpCheck.recordset.length || otpCheck.recordset[0].Used) {
+      return res.status(400).json({ message: 'This reset link has already been used.' });
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update password
+    await pool.request()
+      .input('Email',        sql.NVarChar(255), decoded.email)
+      .input('PasswordHash', sql.NVarChar(255), passwordHash)
+      .query(`
+        UPDATE dbo.Users
+        SET PasswordHash = @PasswordHash, UpdatedAt = SYSUTCDATETIME()
+        WHERE Email = @Email
+      `);
+
+    // Mark OTP as used
+    await pool.request()
+      .input('OtpId', sql.Int, decoded.otpId)
+      .query(`UPDATE dbo.PasswordResetOtp SET Used = 1 WHERE OtpId = @OtpId`);
+
+    res.json({ message: 'Password reset successfully. You can now log in.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { register, login, me, sendOtp, verifyOtp, resetPassword };

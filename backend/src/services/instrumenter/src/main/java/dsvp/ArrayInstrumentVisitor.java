@@ -81,7 +81,7 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
 
             int pos = md.getParameters().indexOf(p);
             boolean collision = byName.getOrDefault(md.getNameAsString(),
-                    java.util.Collections.emptyList()).stream()o
+                    java.util.Collections.emptyList()).stream()
                 .filter(m -> m != md)
                 .anyMatch(m -> m.getParameters().size() == md.getParameters().size()
                     && isTrackable(m.getParameters().get(pos).getType()));

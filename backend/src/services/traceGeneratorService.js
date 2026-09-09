@@ -2,6 +2,7 @@
 
 const ARRAY_OPS = new Set(['init','write','read','swap','append','compare']);
 const EXEC_OPS  = new Set(['call','line','return']);
+const LL_OPS    = new Set(['ll_snap','ll_init','ll_update','ll_insert','ll_delete','ll_traverse']);
 
 function buildTraceEvents({ language, rawTrace, moduleSlug, userOutput }) {
   if (!rawTrace || !Array.isArray(rawTrace.steps)) return [];
@@ -14,9 +15,10 @@ function normalizeAll(steps, userOutput) {
 
   // Running context
   const ctx = {
-    frames:    [],     // StackFrame stack — bottom [0] → top [last]
-    lastSnap:  [],     // most recent array snapshot
-    lineNo:    null,
+    frames:      [],   // StackFrame stack
+    lastSnap:    [],   // most recent array snapshot
+    lastLLSnap:  [],   // most recent linked-list snapshot
+    lineNo:      null,
   };
 
   let stepNo = 0;
@@ -28,6 +30,13 @@ function normalizeAll(steps, userOutput) {
     if (ARRAY_OPS.has(op)) {
       const evt = buildArrayEvt(s, stepNo, op, ctx, userOutput);
       ctx.lastSnap = evt.arrayState;
+      events.push(evt);
+      continue;
+    }
+
+    if (LL_OPS.has(op)) {
+      const evt = buildLLEvt(s, stepNo, op, ctx, userOutput);
+      ctx.lastLLSnap = evt.linkedListState;
       events.push(evt);
       continue;
     }
@@ -88,6 +97,33 @@ function buildArrayEvt(s, stepNo, op, ctx, userOutput) {
   return base(stepNo, op, 'array', description, ctx, userOutput, {
     arrayState: snap, activeIndex, secondIndex, value,
   });
+}
+
+/* ── Linked-List event builder ────────────────────────────────────────── */
+function buildLLEvt(s, stepNo, op, ctx, userOutput) {
+  // nodes: [{id, val, nextId, isHead}, ...]
+  const nodes    = Array.isArray(s.nodes) ? s.nodes : [...(ctx.lastLLSnap || [])];
+  const activeId = (s.activeId !== undefined && s.activeId !== null) ? s.activeId : -1;
+  const desc     = s.desc || opToLLDesc(op, nodes, activeId);
+
+  return base(stepNo, op, 'linkedList', desc, ctx, userOutput, {
+    linkedListState: nodes,
+    activeNodeId:    activeId,
+  });
+}
+
+function opToLLDesc(op, nodes, activeId) {
+  const node = nodes.find(n => n.id === activeId);
+  const val  = node ? node.val : '';
+  switch (op) {
+    case 'll_init':     return `List initialized (${nodes.length} node${nodes.length !== 1 ? 's' : ''})`;
+    case 'll_insert':   return `Inserted node${val ? ' ' + val : ''}`;
+    case 'll_delete':   return `Deleted node${val ? ' ' + val : ''}`;
+    case 'll_traverse': return `Visiting node${val ? ' → ' + val : ''}`;
+    case 'll_update':   return `Pointer updated`;
+    case 'll_snap':     return `List updated (${nodes.length} node${nodes.length !== 1 ? 's' : ''})`;
+    default:            return `Linked list step`;
+  }
 }
 
 /* ── Execution event builder ──────────────────────────────────────────── */
@@ -170,10 +206,13 @@ function base(stepNo, type, category, description, ctx, userOutput, overrides) {
     category,
     description,
     // array panel defaults (overridden by array events)
-    arrayState:    [...ctx.lastSnap],
-    activeIndex:   null,
-    secondIndex:   null,
-    value:         null,
+    arrayState:      [...ctx.lastSnap],
+    activeIndex:     null,
+    secondIndex:     null,
+    value:           null,
+    // linked-list panel defaults (overridden by ll events)
+    linkedListState: [...(ctx.lastLLSnap || [])],
+    activeNodeId:    -1,
     // call-stack panel
     callStack:     ctx.frames.map(f => ({ ...f, locals: { ...f.locals }, args: { ...f.args } })),
     currentFunc:   topFunc(ctx),

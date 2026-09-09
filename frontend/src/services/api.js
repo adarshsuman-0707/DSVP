@@ -18,6 +18,11 @@ export const registerUser = (data) => api.post('/auth/register', data);
 export const loginUser = (data) => api.post('/auth/login', data);
 export const getMe = () => api.get('/auth/me');
 
+// -------- Forgot Password --------
+export const forgotSendOtp    = (email)                    => api.post('/auth/forgot-password/send-otp',   { email });
+export const forgotVerifyOtp  = (email, otp)               => api.post('/auth/forgot-password/verify-otp', { email, otp });
+export const forgotResetPass  = (resetToken, newPassword)  => api.post('/auth/forgot-password/reset',      { resetToken, newPassword });
+
 // -------- Modules --------
 export const getModules = (filter = 'all') => api.get(`/modules?filter=${filter}`);
 export const getModuleBySlug = (slug) => api.get(`/modules/${slug}`);

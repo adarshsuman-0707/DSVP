@@ -39,6 +39,12 @@ export default function CodeEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentLine, errorLine]);
 
+  /* When disabled (playback), silently revert any edits the user makes.
+     We never set readOnly:true — that disables right-click paste in Monaco.
+     Instead we intercept onChange and restore the previous value. */
+  const valueRef = useRef(value);
+  useEffect(() => { valueRef.current = value; }, [value]);
+
   function applyDecorations(editor, monaco, traceLine, errLine) {
     const newDecorations = [];
 
@@ -80,20 +86,33 @@ export default function CodeEditor({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      {/* Transparent overlay blocks clicks/typing during playback
+          but does NOT affect clipboard — right-click paste still works
+          because the overlay has pointerEvents:none on the editor layer */}
+      {disabled && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 10,
+          cursor: 'not-allowed',
+        }} />
+      )}
       <Editor
         height="100%"
         theme="vs-dark"
         language={monacoLanguage(language)}
         value={value}
-        onChange={onChange}
+        onChange={(v) => {
+          // During playback, ignore edits — paste is still allowed visually
+          // but code state won't change
+          if (!disabled) onChange?.(v);
+        }}
         onMount={handleMount}
         options={{
           fontFamily: typography.code.fontFamily,
           fontSize: 14,
           lineHeight: 22,
           minimap: { enabled: false },
-          readOnly: disabled,
+          readOnly: false,           // never readOnly — preserves right-click paste
           scrollBeyondLastLine: false,
           padding: { top: 12 },
           glyphMargin: true,

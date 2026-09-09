@@ -1,7 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
-import ArrayVisualizer from './ArrayVisualizer';
-import CallStackPanel  from './CallStackPanel';
-import ExecutionHistoryPanel from './ExecutionHistoryPanel';
+import ArrayVisualizer        from './ArrayVisualizer';
+import LinkedListVisualizer   from './LinkedListVisualizer';
+import CallStackPanel         from './CallStackPanel';
+import ExecutionHistoryPanel  from './ExecutionHistoryPanel';
+
+/* ── helper: is this event a linked-list event? ── */
+const LL_EVENT_TYPES = new Set([
+  'll_snap','ll_init','ll_update','ll_insert','ll_delete','ll_traverse'
+]);
+
+function isLLEvent(event) {
+  return event && LL_EVENT_TYPES.has(event.type);
+}
+
+function isLLModule(slug) {
+  return slug === 'linked-list';
+}
 
 /**
  * VisualizationCanvas
@@ -69,7 +83,10 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
         style={{ display: 'flex', height: '100%', userSelect: (isResizingH || isResizingV) ? 'none' : 'auto' }}
       >
         <div style={{ flex: 1 }}>
-          <NoEventState moduleSlug={moduleSlug} />
+          {isLLModule(moduleSlug)
+            ? <LinkedListVisualizer linkedListState={[]} />
+            : <NoEventState moduleSlug={moduleSlug} />
+          }
         </div>
         
         {/* Horizontal Resize Handle */}
@@ -146,20 +163,30 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
       style={{ display: 'flex', height: '100%', overflow: 'hidden', userSelect: (isResizingH || isResizingV) ? 'none' : 'auto' }}
     >
 
-      {/* ── Left: array visualization ── */}
+      {/* ── Left: structure visualizer (routed by moduleSlug) ── */}
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-        <ArrayVisualizer
-          arrayState={event.arrayState   ?? []}
-          activeIndex={event.activeIndex ?? null}
-          secondIndex={event.secondIndex ?? null}
-          type={event.type               ?? 'highlight'}
-          description={event.type === 'call' || event.type === 'return' || event.type === 'line'
-            ? ''   // don't show call/return/line in the array description bar
-            : (event.description ?? '')}
-          step={event.step               ?? 0}
-          totalSteps={totalSteps         ?? 0}
-          userOutput={event.userOutput   ?? ''}
-        />
+        {isLLModule(moduleSlug) || isLLEvent(event) ? (
+          <LinkedListVisualizer
+            linkedListState={event.linkedListState ?? []}
+            activeNodeId={event.activeNodeId       ?? -1}
+            type={event.type                       ?? 'll_snap'}
+            description={isExecEvent(event.type) ? '' : (event.description ?? '')}
+            step={event.step                       ?? 0}
+            totalSteps={totalSteps                 ?? 0}
+            userOutput={event.userOutput           ?? ''}
+          />
+        ) : (
+          <ArrayVisualizer
+            arrayState={event.arrayState   ?? []}
+            activeIndex={event.activeIndex ?? null}
+            secondIndex={event.secondIndex ?? null}
+            type={event.type               ?? 'highlight'}
+            description={isExecEvent(event.type) ? '' : (event.description ?? '')}
+            step={event.step               ?? 0}
+            totalSteps={totalSteps         ?? 0}
+            userOutput={event.userOutput   ?? ''}
+          />
+        )}
       </div>
 
       {/* ── Horizontal Resize Handle ── */}
@@ -290,7 +317,15 @@ function NoEventState({ moduleSlug }) {
 
 function getHints(slug) {
   switch (slug) {
-    case 'array': return ['Array(5)', 'arr[0] = 42', 'arr.swap(0, 3)', 'arr[i] (read)'];
-    default:      return ['Array(5)', 'arr[i] = v'];
+    case 'array':
+      return ['int[] arr = {1,2,3}', 'arr[i] = v', 'swap'];
+    case 'linked-list':
+      return ['class Node { int data; Node next; }', 'head.next = new Node(20)', 'cur = cur.next'];
+    default:
+      return ['Write your code', 'Hit ▶ Run'];
   }
+}
+
+function isExecEvent(type) {
+  return type === 'call' || type === 'return' || type === 'line';
 }

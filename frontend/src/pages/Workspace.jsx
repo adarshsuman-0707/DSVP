@@ -17,109 +17,194 @@ const MODULES = [
   { slug: 'queue',       label: 'Queue'       },
 ];
 
-/* ── Starter code snippets per language ── */
+/* ── Starter code: STARTER[moduleSlug][language] ── */
 const STARTER = {
-  python: `# Array module — starter example
-# Use Array() to create a traced array.
-# Supports: arr[i] = v   (write)
-#           arr[i]        (read)
-#           arr.swap(i,j) (swap)
-#           Array(size)   (init)
+  'array': {
+    python: `# Array — visualization demo
+arr = [10, 25, 3, 47, 8, 15]
 
-arr = Array(5)          # create array of size 5
+max_val = arr[0]
+for i in range(1, len(arr)):
+    if arr[i] > max_val:
+        max_val = arr[i]
 
-for i in range(5):
-    arr[i] = (i + 1) * 10  # fill: 10, 20, 30, 40, 50
-
-arr.swap(0, 4)          # swap first and last
-arr[2] = 99             # overwrite middle
-val = arr[1]            # read index 1
-print("Done! arr[1] =", val)
+print("Max:", max_val)
 `,
-
-  cpp: `// Array module — starter example
-// Use DSVPArray to get a traced array.
-// DSVPArray arr(5);       -- init size 5, fill 0
-// arr.set(i, v)           -- write
-// arr[i]                  -- read  (also traces)
-// arr.swap_at(i, j)       -- swap
+    cpp: `#include <iostream>
+using namespace std;
 
 int main() {
-    DSVPArray arr(5);
+    int arr[] = {10, 25, 3, 47, 8, 15};
+    int n = sizeof(arr) / sizeof(arr[0]);
 
-    for (int i = 0; i < arr.size(); i++)
-        arr.set(i, (i + 1) * 10);  // 10 20 30 40 50
-
-    arr.swap_at(0, 4);   // swap first and last
-    arr.set(2, 99);      // overwrite index 2
-    int v = arr[1];      // read index 1
+    int max_val = arr[0];
+    for (int i = 1; i < n; i++) {
+        if (arr[i] > max_val) max_val = arr[i];
+    }
+    cout << "Max: " << max_val << endl;
     return 0;
 }
 `,
-
-  java: `// Array module — starter example
-// DSVPArray is pre-defined for you.
-// new DSVPArray(size)   — init
-// arr.set(i, v)         — write
-// arr.get(i)            — read
-// arr.swap(i, j)        — swap
-
-public class Main {
+    java: `public class Main {
     public static void main(String[] args) {
-        DSVPArray arr = new DSVPArray(5);
+        int[] arr = {10, 25, 3, 47, 8, 15};
 
-        for (int i = 0; i < arr.size(); i++)
-            arr.set(i, (i + 1) * 10);  // 10 20 30 40 50
-
-        arr.swap(0, 4);        // swap first and last
-        arr.set(2, 99);        // overwrite index 2
-        int v = arr.get(1);    // read index 1
-        System.out.println("Done! arr[1] = " + v);
+        int max = arr[0];
+        for (int i = 1; i < arr.length; i++) {
+            if (arr[i] > max) max = arr[i];
+        }
+        System.out.println("Max: " + max);
     }
 }
 `,
-
-  c: `// Array module — starter example
-// DSVPArray is pre-defined via the shim.
-// Array(size)           — init
-// arr_set(&a, i, v)     — write
-// arr_get(&a, i)        — read
-// arr_swap(&a, i, j)    — swap
+    c: `#include <stdio.h>
 
 int main() {
-    DSVPArray arr = Array(5);
+    int arr[] = {10, 25, 3, 47, 8, 15};
+    int n = sizeof(arr) / sizeof(arr[0]);
 
-    for (int i = 0; i < arr.size; i++)
-        arr_set(&arr, i, (i + 1) * 10);  // 10 20 30 40 50
-
-    arr_swap(&arr, 0, 4);   // swap first and last
-    arr_set(&arr, 2, 99);   // overwrite index 2
-    int v = arr_get(&arr, 1); // read index 1
+    int max = arr[0];
+    for (int i = 1; i < n; i++) {
+        if (arr[i] > max) max = arr[i];
+    }
+    printf("Max: %d\\n", max);
     return 0;
 }
 `,
-
-  csharp: `// Array module — starter example
-// DSVPArray is pre-defined for you.
-// new DSVPArray(size)   — init
-// arr.Set(i, v)         — write
-// arr.Get(i)            — read
-// arr.Swap(i, j)        — swap
+    csharp: `using System;
 
 class Main {
-    static void Main() {
-        var arr = new DSVPArray(5);
+    static void Main(string[] args) {
+        int[] arr = {10, 25, 3, 47, 8, 15};
 
-        for (int i = 0; i < arr.Length; i++)
-            arr.Set(i, (i + 1) * 10);  // 10 20 30 40 50
-
-        arr.Swap(0, 4);        // swap first and last
-        arr.Set(2, 99);        // overwrite index 2
-        int v = arr.Get(1);    // read index 1
-        System.Console.WriteLine("Done! arr[1] = " + v);
+        int max = arr[0];
+        for (int i = 1; i < arr.Length; i++) {
+            if (arr[i] > max) max = arr[i];
+        }
+        Console.WriteLine("Max: " + max);
     }
 }
 `,
+  },
+
+  'linked-list': {
+    python: `# Linked List — DSVP auto-detects your Node class!
+
+class Node:
+    def __init__(self, data):
+        self.data = data
+        self.next = None
+
+# Build: 10 → 20 → 30 → 40 → None
+head = Node(10)
+head.next = Node(20)
+head.next.next = Node(30)
+head.next.next.next = Node(40)
+
+# Traverse
+cur = head
+while cur is not None:
+    print(cur.data)
+    cur = cur.next
+`,
+    java: `public class Main {
+
+    static class Node {
+        int data;
+        Node next;
+        Node(int data) { this.data = data; this.next = null; }
+    }
+
+    public static void main(String[] args) {
+        // Build: 10 → 20 → 30 → 40 → null
+        Node head = new Node(10);
+        head.next = new Node(20);
+        head.next.next = new Node(30);
+        head.next.next.next = new Node(40);
+
+        // Traverse
+        Node cur = head;
+        while (cur != null) {
+            System.out.println(cur.data);
+            cur = cur.next;
+        }
+    }
+}
+`,
+    cpp: `#include <iostream>
+using namespace std;
+
+struct Node {
+    int data;
+    Node* next;
+    Node(int d) : data(d), next(nullptr) {}
+};
+
+int main() {
+    Node* head = new Node(10);
+    head->next = new Node(20);
+    head->next->next = new Node(30);
+    head->next->next->next = new Node(40);
+
+    Node* cur = head;
+    while (cur != nullptr) {
+        cout << cur->data << endl;
+        cur = cur->next;
+    }
+    return 0;
+}
+`,
+    c: `#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node* next;
+} Node;
+
+Node* newNode(int d) {
+    Node* n = (Node*)malloc(sizeof(Node));
+    n->data = d; n->next = NULL; return n;
+}
+
+int main() {
+    Node* head = newNode(10);
+    head->next = newNode(20);
+    head->next->next = newNode(30);
+    head->next->next->next = newNode(40);
+
+    Node* cur = head;
+    while (cur != NULL) {
+        printf("%d\\n", cur->data);
+        cur = cur->next;
+    }
+    return 0;
+}
+`,
+    csharp: `using System;
+
+class Main {
+    class Node {
+        public int data;
+        public Node next;
+        public Node(int d) { data = d; next = null; }
+    }
+
+    static void Main(string[] args) {
+        Node head = new Node(10);
+        head.next = new Node(20);
+        head.next.next = new Node(30);
+        head.next.next.next = new Node(40);
+
+        Node cur = head;
+        while (cur != null) {
+            Console.WriteLine(cur.data);
+            cur = cur.next;
+        }
+    }
+}
+`,
+  },
 };
 
 export default function Workspace() {
@@ -129,7 +214,7 @@ export default function Workspace() {
 
   const [language, setLanguage]         = useState('python');
   const [moduleSlug, setModuleSlug]     = useState(initialSlug);
-  const [code, setCode]                 = useState(STARTER['python']);
+  const [code, setCode] = useState(() => STARTER[initialSlug]?.['python'] || STARTER['array']['python']);
   const [events, setEvents]             = useState([]);
   const [stepIndex, setStepIndex]       = useState(0);
   const [isPlaying, setIsPlaying]       = useState(false);

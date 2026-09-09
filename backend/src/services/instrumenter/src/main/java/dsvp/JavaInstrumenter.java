@@ -82,6 +82,11 @@ public class JavaInstrumenter {
             ArrayInstrumentVisitor arrayPass = new ArrayInstrumentVisitor();
             arrayPass.visit(cu, null);
 
+            // LinkedList auto-instrumentation — detects user-defined Node classes
+            // and injects trace calls after every .next assignment and in loop bodies
+            LinkedListInstrumentVisitor llPass = new LinkedListInstrumentVisitor();
+            llPass.visit(cu, null);
+
             CallTraceInstrumentVisitor callPass = new CallTraceInstrumentVisitor();
             callPass.visit(cu, null);
         }
@@ -104,7 +109,7 @@ public class JavaInstrumenter {
             }
         }
 
-        // Print in correct order: user imports → runtime shim → user code (without imports)
+        // Print in correct order: user imports → runtime shims → user code
         System.out.print(imports.toString());
         System.out.println(RuntimeShim.SOURCE);
         System.out.print(rest.toString());

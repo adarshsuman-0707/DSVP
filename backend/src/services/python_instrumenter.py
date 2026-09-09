@@ -701,6 +701,22 @@ def _make_tracer(source_lines):
             prev_locals_by_frame[id(frame)] = dict(locals_snap)
             _emit_line(func_name, depth, line_no, _source_at(line_no), locals_snap, changed)
 
+            # ── LinkedList class auto-detection ──────────────────────────
+            # After each line, check if any local variable is a node-like
+            # object whose class hasn't been patched yet.
+            try:
+                for v in frame.f_locals.values():
+                    if _is_node_like(v) and id(type(v)) not in _LL_PATCHED_CLASSES:
+                        _patch_node_class(type(v))
+                        # Register it and emit initial snapshot
+                        _LL_REGISTRY[id(v)] = v
+                        _emit_ll("ll_init", id(v), "Linked list detected", _LL_REGISTRY)
+                    elif _is_node_like(v):
+                        # Already patched — just make sure it's registered
+                        _LL_REGISTRY[id(v)] = v
+            except Exception:
+                pass
+
         elif event == 'return':
             ret_repr = _safe_repr(arg) if arg is not None else 'None'
             locals_snap = _get_locals(frame)
@@ -838,6 +854,117 @@ def Array(size_or_list, fill=0):
     if isinstance(size_or_list, int):
         return _DSVPArray([fill] * size_or_list)
     return _DSVPArray(list(size_or_list))
+
+
+# ── LinkedList node tracker ────────────────────────────────────────────────────
+# We detect linked-list objects at RUNTIME by sniffing __setattr__ calls.
+# When any user object assigns to a "next" / "prev" / "data" / "val" attribute,
+# we snapshot the full reachable chain starting from every known head and emit
+# an ll_snap event.  This works for ANY user-defined Node class — no rewrite needed.
+
+_LL_REGISTRY = {}   # id(node) → node object  (ALL live nodes we've seen)
+_LL_HEADS    = {}   # id(node) → node object  (nodes with no known "prev" pointer)
+
+def _is_node_like(obj):
+    """Heuristic: has a 'next' attribute and is a user-defined object."""
+    return (hasattr(obj, 'next') and
+            not isinstance(obj, (str, bytes, bytearray, int, float, bool, type)))
+
+def _node_id(node):
+    return id(node)
+
+def _node_val(node):
+    """Return the display value of a node — tries data, val, value."""
+    for attr in ('data', 'val', 'value', 'key', 'item'):
+        if hasattr(node, attr):
+            v = getattr(node, attr)
+            if not _is_node_like(v):
+                return v
+    return '?'
+
+def _snapshot_chain(head, max_nodes=64):
+    """
+    Walk a linked list from head, return list of dicts:
+      [{"id": <int>, "val": <any>, "nextId": <int|null>, "isHead": <bool>}, ...]
+    Stops after max_nodes to prevent infinite loops.
+    """
+    nodes = []
+    seen  = set()
+    cur   = head
+    first = True
+    while cur is not None and id(cur) not in seen and len(nodes) < max_nodes:
+        seen.add(id(cur))
+        nxt   = getattr(cur, 'next', None)
+        # Handle doubly-linked list — skip if nxt is a prev-only ref
+        nodes.append({
+            "id":     id(cur),
+            "val":    _node_val(cur),
+            "nextId": id(nxt) if nxt is not None else None,
+            "isHead": first,
+        })
+        first = False
+        cur   = nxt
+    return nodes
+
+def _find_heads(registry):
+    """
+    Nodes that are not pointed to by any other node's 'next' — likely heads.
+    Returns list of node objects.
+    """
+    pointed_at = set()
+    for node in registry.values():
+        nxt = getattr(node, 'next', None)
+        if nxt is not None:
+            pointed_at.add(id(nxt))
+    return [n for nid, n in registry.items() if nid not in pointed_at]
+
+def _emit_ll(op, active_id, desc, registry):
+    """
+    Find all heads in registry, snapshot each chain, emit ll_snap event.
+    """
+    heads = _find_heads(registry)
+    all_nodes = []
+    seen_ids  = set()
+    for h in heads:
+        chain = _snapshot_chain(h)
+        for nd in chain:
+            if nd["id"] not in seen_ids:
+                seen_ids.add(nd["id"])
+                all_nodes.append(nd)
+    _write({
+        "op":       op,
+        "activeId": active_id,
+        "nodes":    all_nodes,
+        "desc":     desc,
+    })
+
+class _NodeProxy:
+    """
+    Transparent __setattr__ interceptor injected around user Node instances.
+    We monkey-patch the user's Node class __setattr__ at runtime.
+    """
+    pass
+
+_LL_PATCHED_CLASSES = set()  # set of class ids already patched
+
+def _patch_node_class(cls):
+    """Monkey-patch cls.__setattr__ to emit ll_snap on next/data/val changes."""
+    if id(cls) in _LL_PATCHED_CLASSES:
+        return
+    _LL_PATCHED_CLASSES.add(id(cls))
+    original_init    = cls.__init__  if hasattr(cls, '__init__')    else None
+    original_setattr = cls.__setattr__ if hasattr(cls, '__setattr__') else object.__setattr__
+
+    def _dsvp_setattr(self, name, value):
+        original_setattr(self, name, value)
+        # Register this node
+        _LL_REGISTRY[id(self)] = self
+        # If next pointer changed or it's a data attribute, emit snapshot
+        if name in ('next', 'prev', 'data', 'val', 'value', 'key', 'item'):
+            _emit_ll("ll_update", id(self),
+                     f"node.{name} = {value!r}", _LL_REGISTRY)
+
+    cls.__setattr__ = _dsvp_setattr
 
 
 # ── AST transformer ───────────────────────────────────────────────────────────
@@ -1003,14 +1130,21 @@ def main():
 
     namespace = {
         "__name__": "__main__",
-        "_emit":         _emit,
-        "_DSVPArray":    _DSVPArray,
-        "_dsvp_make":    _dsvp_make,
-        "_dsvp_set":     _dsvp_set,
-        "_dsvp_swap":    _dsvp_swap,
-        "_dsvp_compare": _dsvp_compare,
-        "_dsvp_read":    _dsvp_read,
-        "Array":         Array,
+        "_emit":          _emit,
+        "_DSVPArray":     _DSVPArray,
+        "_dsvp_make":     _dsvp_make,
+        "_dsvp_set":      _dsvp_set,
+        "_dsvp_swap":     _dsvp_swap,
+        "_dsvp_compare":  _dsvp_compare,
+        "_dsvp_read":     _dsvp_read,
+        "Array":          Array,
+        # LL helpers (auto-detection — no explicit import needed by user)
+        "_LL_REGISTRY":   _LL_REGISTRY,
+        "_LL_HEADS":      _LL_HEADS,
+        "_patch_node_class": _patch_node_class,
+        "_emit_ll":       _emit_ll,
+        "_is_node_like":  _is_node_like,
+        "_LL_PATCHED_CLASSES": _LL_PATCHED_CLASSES,
     }
 
     source_lines = source.splitlines()
