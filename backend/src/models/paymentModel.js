@@ -3,37 +3,50 @@ const { sql, getPool } = require('../config/db');
 const PaymentModel = {
   async listAll({ page = 1, pageSize = 20, status = 'all' } = {}) {
     const pool   = await getPool();
-    const offset = (page - 1) * pageSize;
+    const startRow = ((page - 1) * pageSize) + 1;
+    const endRow = page * pageSize;
 
     if (status !== 'all') {
       const result = await pool.request()
-        .input('Offset',   sql.Int,        offset)
-        .input('PageSize', sql.Int,        pageSize)
+        .input('StartRow', sql.Int,        startRow)
+        .input('EndRow',   sql.Int,        endRow)
         .input('Status',   sql.VarChar(20), status)
         .query(`
-          SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
-                 p.Provider, p.Amount, p.Currency, p.PlanName,
-                 p.Status, p.CreatedAt, p.ProviderPaymentId
-          FROM dbo.Payments p
-          JOIN dbo.Users u ON u.UserId = p.UserId
-          WHERE p.Status = @Status
-          ORDER BY p.CreatedAt DESC
-          OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+          WITH PaymentData AS (
+            SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
+                   p.Provider, p.Amount, p.Currency, p.PlanName,
+                   p.Status, p.CreatedAt, p.ProviderPaymentId,
+                   ROW_NUMBER() OVER (ORDER BY p.CreatedAt DESC) AS RowNum
+            FROM dbo.Payments p
+            JOIN dbo.Users u ON u.UserId = p.UserId
+            WHERE p.Status = @Status
+          )
+          SELECT PaymentId, UserId, FullName, Email, Provider, Amount, 
+                 Currency, PlanName, Status, CreatedAt, ProviderPaymentId
+          FROM PaymentData
+          WHERE RowNum BETWEEN @StartRow AND @EndRow
+          ORDER BY RowNum
         `);
       return result.recordset;
     }
 
     const result = await pool.request()
-      .input('Offset',   sql.Int, offset)
-      .input('PageSize', sql.Int, pageSize)
+      .input('StartRow', sql.Int, startRow)
+      .input('EndRow',   sql.Int, endRow)
       .query(`
-        SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
-               p.Provider, p.Amount, p.Currency, p.PlanName,
-               p.Status, p.CreatedAt, p.ProviderPaymentId
-        FROM dbo.Payments p
-        JOIN dbo.Users u ON u.UserId = p.UserId
-        ORDER BY p.CreatedAt DESC
-        OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+        WITH PaymentData AS (
+          SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
+                 p.Provider, p.Amount, p.Currency, p.PlanName,
+                 p.Status, p.CreatedAt, p.ProviderPaymentId,
+                 ROW_NUMBER() OVER (ORDER BY p.CreatedAt DESC) AS RowNum
+          FROM dbo.Payments p
+          JOIN dbo.Users u ON u.UserId = p.UserId
+        )
+        SELECT PaymentId, UserId, FullName, Email, Provider, Amount, 
+               Currency, PlanName, Status, CreatedAt, ProviderPaymentId
+        FROM PaymentData
+        WHERE RowNum BETWEEN @StartRow AND @EndRow
+        ORDER BY RowNum
       `);
     return result.recordset;
   },

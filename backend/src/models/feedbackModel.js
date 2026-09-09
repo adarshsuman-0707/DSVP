@@ -3,35 +3,46 @@ const { sql, getPool } = require('../config/db');
 const FeedbackModel = {
   async listAll({ page = 1, pageSize = 20, status = 'all' } = {}) {
     const pool   = await getPool();
-    const offset = (page - 1) * pageSize;
+    const startRow = ((page - 1) * pageSize) + 1;
+    const endRow = page * pageSize;
 
     if (status !== 'all') {
       const result = await pool.request()
-        .input('Offset',   sql.Int,        offset)
-        .input('PageSize', sql.Int,        pageSize)
+        .input('StartRow', sql.Int,        startRow)
+        .input('EndRow',   sql.Int,        endRow)
         .input('Status',   sql.VarChar(20), status)
         .query(`
-          SELECT f.FeedbackId, f.UserId, u.FullName, u.Email,
-                 f.Subject, f.Message, f.Status, f.CreatedAt
-          FROM dbo.Feedback f
-          LEFT JOIN dbo.Users u ON u.UserId = f.UserId
-          WHERE f.Status = @Status
-          ORDER BY f.CreatedAt DESC
-          OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+          WITH FeedbackData AS (
+            SELECT f.FeedbackId, f.UserId, u.FullName, u.Email,
+                   f.Subject, f.Message, f.Status, f.CreatedAt,
+                   ROW_NUMBER() OVER (ORDER BY f.CreatedAt DESC) AS RowNum
+            FROM dbo.Feedback f
+            LEFT JOIN dbo.Users u ON u.UserId = f.UserId
+            WHERE f.Status = @Status
+          )
+          SELECT FeedbackId, UserId, FullName, Email, Subject, Message, Status, CreatedAt
+          FROM FeedbackData
+          WHERE RowNum BETWEEN @StartRow AND @EndRow
+          ORDER BY RowNum
         `);
       return result.recordset;
     }
 
     const result = await pool.request()
-      .input('Offset',   sql.Int, offset)
-      .input('PageSize', sql.Int, pageSize)
+      .input('StartRow', sql.Int, startRow)
+      .input('EndRow',   sql.Int, endRow)
       .query(`
-        SELECT f.FeedbackId, f.UserId, u.FullName, u.Email,
-               f.Subject, f.Message, f.Status, f.CreatedAt
-        FROM dbo.Feedback f
-        LEFT JOIN dbo.Users u ON u.UserId = f.UserId
-        ORDER BY f.CreatedAt DESC
-        OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+        WITH FeedbackData AS (
+          SELECT f.FeedbackId, f.UserId, u.FullName, u.Email,
+                 f.Subject, f.Message, f.Status, f.CreatedAt,
+                 ROW_NUMBER() OVER (ORDER BY f.CreatedAt DESC) AS RowNum
+          FROM dbo.Feedback f
+          LEFT JOIN dbo.Users u ON u.UserId = f.UserId
+        )
+        SELECT FeedbackId, UserId, FullName, Email, Subject, Message, Status, CreatedAt
+        FROM FeedbackData
+        WHERE RowNum BETWEEN @StartRow AND @EndRow
+        ORDER BY RowNum
       `);
     return result.recordset;
   },

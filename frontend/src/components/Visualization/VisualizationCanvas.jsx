@@ -1,33 +1,35 @@
 import { useState, useEffect, useRef } from 'react';
 import ArrayVisualizer from './ArrayVisualizer';
 import CallStackPanel  from './CallStackPanel';
+import ExecutionHistoryPanel from './ExecutionHistoryPanel';
 
 /**
  * VisualizationCanvas
  * ────────────────────
  * Routes to the correct structure visualizer (left panel)
- * and always shows the CallStackPanel (right panel).
- * Now with resizable right panel!
+ * and shows CallStackPanel + ExecutionHistoryPanel (right panel).
+ * Both horizontal (left/right) and vertical (call stack/history) resizing!
  */
-export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
+export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0 }) {
   const [rightPanelWidth, setRightPanelWidth] = useState(320);
-  const [isResizing, setIsResizing] = useState(false);
+  const [callStackHeight, setCallStackHeight] = useState(300);
+  const [isResizingH, setIsResizingH] = useState(false);
+  const [isResizingV, setIsResizingV] = useState(false);
   const containerRef = useRef(null);
+  const rightPanelRef = useRef(null);
 
+  // Horizontal resize (left/right split)
   useEffect(() => {
-    if (!isResizing) return;
+    if (!isResizingH) return;
 
     const handleMouseMove = (e) => {
       if (!containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
       const newWidth = containerRect.right - e.clientX;
-      // Constrain between 200px and 600px
       setRightPanelWidth(Math.max(200, Math.min(600, newWidth)));
     };
 
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
+    const handleMouseUp = () => setIsResizingH(false);
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
@@ -36,31 +38,48 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing]);
+  }, [isResizingH]);
 
-  const handleMouseDown = (e) => {
-    setIsResizing(true);
-    e.preventDefault();
-  };
+  // Vertical resize (call stack/history split)
+  useEffect(() => {
+    if (!isResizingV) return;
+
+    const handleMouseMove = (e) => {
+      if (!rightPanelRef.current) return;
+      const panelRect = rightPanelRef.current.getBoundingClientRect();
+      const newHeight = e.clientY - panelRect.top;
+      setCallStackHeight(Math.max(150, Math.min(panelRect.height - 150, newHeight)));
+    };
+
+    const handleMouseUp = () => setIsResizingV(false);
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingV]);
 
   if (!event) {
     return (
       <div 
         ref={containerRef}
-        style={{ display: 'flex', height: '100%', userSelect: isResizing ? 'none' : 'auto' }}
+        style={{ display: 'flex', height: '100%', userSelect: (isResizingH || isResizingV) ? 'none' : 'auto' }}
       >
         <div style={{ flex: 1 }}>
           <NoEventState moduleSlug={moduleSlug} />
         </div>
         
-        {/* Resize Handle */}
+        {/* Horizontal Resize Handle */}
         <div
-          onMouseDown={handleMouseDown}
+          onMouseDown={() => setIsResizingH(true)}
           style={{
             width: 4,
             cursor: 'col-resize',
-            background: isResizing ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
-            transition: isResizing ? 'none' : 'background 150ms ease',
+            background: isResizingH ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
+            transition: isResizingH ? 'none' : 'background 150ms ease',
             position: 'relative',
             flexShrink: 0,
           }}
@@ -72,7 +91,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
             transform: 'translate(-50%, -50%)',
             width: 20,
             height: 40,
-            background: isResizing ? 'rgba(76,175,80,.3)' : 'transparent',
+            background: isResizingH ? 'rgba(76,175,80,.3)' : 'transparent',
             borderRadius: 4,
             display: 'flex',
             alignItems: 'center',
@@ -84,18 +103,36 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
           </div>
         </div>
 
-        <div style={{ width: rightPanelWidth, flexShrink: 0 }}>
-          <CallStackPanel
-            callStack={[]}
-            currentFunc={null}
-            returningFrame={null}
-            currentLine={null}
-            sourceLine={null}
-            locals={null}
-            changedVars={[]}
-            type=""
-            description=""
+        <div ref={rightPanelRef} style={{ width: rightPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ height: callStackHeight, overflow: 'hidden' }}>
+            <CallStackPanel
+              callStack={[]}
+              currentFunc={null}
+              returningFrame={null}
+              currentLine={null}
+              sourceLine={null}
+              locals={null}
+              changedVars={[]}
+              type=""
+              description=""
+            />
+          </div>
+          
+          {/* Vertical Resize Handle */}
+          <div
+            onMouseDown={() => setIsResizingV(true)}
+            style={{
+              height: 4,
+              cursor: 'row-resize',
+              background: isResizingV ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+              transition: isResizingV ? 'none' : 'background 150ms ease',
+              flexShrink: 0,
+            }}
           />
+          
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <ExecutionHistoryPanel events={[]} currentStep={0} />
+          </div>
         </div>
       </div>
     );
@@ -106,7 +143,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
   return (
     <div 
       ref={containerRef}
-      style={{ display: 'flex', height: '100%', overflow: 'hidden', userSelect: isResizing ? 'none' : 'auto' }}
+      style={{ display: 'flex', height: '100%', overflow: 'hidden', userSelect: (isResizingH || isResizingV) ? 'none' : 'auto' }}
     >
 
       {/* ── Left: array visualization ── */}
@@ -125,14 +162,14 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
         />
       </div>
 
-      {/* ── Resize Handle ── */}
+      {/* ── Horizontal Resize Handle ── */}
       <div
-        onMouseDown={handleMouseDown}
+        onMouseDown={() => setIsResizingH(true)}
         style={{
           width: 4,
           cursor: 'col-resize',
-          background: isResizing ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
-          transition: isResizing ? 'none' : 'background 150ms ease',
+          background: isResizingH ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
+          transition: isResizingH ? 'none' : 'background 150ms ease',
           position: 'relative',
           flexShrink: 0,
           zIndex: 10,
@@ -145,7 +182,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
           transform: 'translate(-50%, -50%)',
           width: 20,
           height: 40,
-          background: isResizing ? 'rgba(76,175,80,.3)' : 'transparent',
+          background: isResizingH ? 'rgba(76,175,80,.3)' : 'transparent',
           borderRadius: 4,
           display: 'flex',
           alignItems: 'center',
@@ -157,19 +194,38 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps }) {
         </div>
       </div>
 
-      {/* ── Right: call stack + live variables ── */}
-      <div style={{ width: rightPanelWidth, flexShrink: 0 }}>
-        <CallStackPanel
-          callStack={event.callStack           ?? []}
-          currentFunc={event.currentFunc       ?? null}
-          returningFrame={event.returningFrame ?? null}
-          currentLine={event.currentLine       ?? null}
-          sourceLine={event.sourceLine         ?? null}
-          locals={event.locals                 ?? null}
-          changedVars={event.changedVars       ?? []}
-          type={event.type                     ?? ''}
-          description={event.description       ?? ''}
+      {/* ── Right: call stack + execution history ── */}
+      <div ref={rightPanelRef} style={{ width: rightPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ height: callStackHeight, overflow: 'hidden' }}>
+          <CallStackPanel
+            callStack={event.callStack           ?? []}
+            currentFunc={event.currentFunc       ?? null}
+            returningFrame={event.returningFrame ?? null}
+            currentLine={event.currentLine       ?? null}
+            sourceLine={event.sourceLine         ?? null}
+            locals={event.locals                 ?? null}
+            changedVars={event.changedVars       ?? []}
+            type={event.type                     ?? ''}
+            description={event.description       ?? ''}
+          />
+        </div>
+        
+        {/* Vertical Resize Handle */}
+        <div
+          onMouseDown={() => setIsResizingV(true)}
+          style={{
+            height: 4,
+            cursor: 'row-resize',
+            background: isResizingV ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+            transition: isResizingV ? 'none' : 'background 150ms ease',
+            flexShrink: 0,
+            zIndex: 10,
+          }}
         />
+        
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <ExecutionHistoryPanel events={allEvents} currentStep={currentStep} />
+        </div>
       </div>
     </div>
   );

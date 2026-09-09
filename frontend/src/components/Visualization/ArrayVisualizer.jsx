@@ -205,6 +205,11 @@ export default function ArrayVisualizer({
 /* ── Cell ─────────────────────────────────────────────────────────────── */
 function ArrayCell({ index, value, isActive, isSecond, isChanged, type, isFirst, isLast }) {
   const cellColor = getCellColor(isActive, isSecond, type);
+  
+  // Handle null, undefined, and empty values
+  const displayValue = value === null || value === undefined || value === '' 
+    ? <span style={{ opacity: 0.4, fontStyle: 'italic' }}>null</span>
+    : String(value);
 
   return (
     <div style={{
@@ -230,7 +235,7 @@ function ArrayCell({ index, value, isActive, isSecond, isChanged, type, isFirst,
         position: 'relative', cursor: 'default',
         zIndex: isChanged ? 2 : 1,
       }}>
-        {value}
+        {displayValue}
       </div>
     </div>
   );

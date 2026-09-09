@@ -4,6 +4,8 @@ import CodeEditor from '../components/Editor/CodeEditor';
 import VisualizationCanvas from '../components/Visualization/VisualizationCanvas';
 import PlaybackBar from '../components/PlaybackBar/PlaybackBar';
 import { runCode } from '../services/api';
+import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory } from '../services/api';
+import { Modal, FormField, Input, Btn } from '../components/AdminDashboard/ui';
 
 const LANGUAGES = ['python', 'cpp', 'java', 'c', 'csharp'];
 const LANG_LABELS = { python: 'Python', cpp: 'C++', java: 'Java', c: 'C', csharp: 'C#' };
@@ -138,6 +140,29 @@ export default function Workspace() {
   const [userOutput, setUserOutput]     = useState('');
   const intervalRef                     = useRef(null);
 
+  // Code history state
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [historyOpen, setHistoryOpen]     = useState(false);
+  const [history, setHistory]             = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  /* Load code history on mount and when module changes */
+  useEffect(() => {
+    loadHistory();
+  }, [moduleSlug]);
+
+  async function loadHistory() {
+    try {
+      setLoadingHistory(true);
+      const res = await getCodeHistory({ moduleSlug, limit: 50 });
+      setHistory(res.data.history || []);
+    } catch (err) {
+      console.error('Failed to load history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
   /* Update starter code when language changes */
   function handleLanguageChange(lang) {
     setLanguage(lang);
@@ -234,6 +259,53 @@ export default function Workspace() {
   const displayStep  = meaningfulRank >= 0 ? meaningfulRank + 1 : (meaningfulOriginalIndices.length || stepIndex + 1);
   const displayTotal = meaningfulOriginalIndices.length || events.length;
 
+  /* Save code handler */
+  async function handleSaveCode(title) {
+    try {
+      await saveCodeHistory({
+        title,
+        language,
+        code,
+        moduleSlug,
+      });
+      setSaveModalOpen(false);
+      await loadHistory();
+      return true;
+    } catch (err) {
+      console.error('Failed to save code:', err);
+      return false;
+    }
+  }
+
+  /* Load code from history */
+  async function handleLoadCode(snippetId) {
+    try {
+      const res = await loadCodeHistory(snippetId);
+      const snippet = res.data.snippet;
+      setCode(snippet.Code);
+      setLanguage(snippet.Language);
+      if (snippet.ModuleSlug && snippet.ModuleSlug !== moduleSlug) {
+        setModuleSlug(snippet.ModuleSlug);
+      }
+      clearRun();
+      setHistoryOpen(false); // Close history sidebar after loading
+    } catch (err) {
+      console.error('Failed to load code:', err);
+      alert('Failed to load code. Please try again.');
+    }
+  }
+
+  /* Delete code from history */
+  async function handleDeleteCode(snippetId) {
+    if (!confirm('Are you sure you want to delete this saved code?')) return;
+    try {
+      await deleteCodeHistory(snippetId);
+      await loadHistory();
+    } catch (err) {
+      console.error('Failed to delete code:', err);
+    }
+  }
+
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100vh',
@@ -286,6 +358,41 @@ export default function Workspace() {
 
         <div style={{ flex: 1 }} />
 
+        {/* History toggle button */}
+        <button
+          onClick={() => setHistoryOpen(!historyOpen)}
+          title="Code History"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            color: historyOpen ? '#2E74B5' : '#8b949e',
+            border: historyOpen ? '1px solid #2E74B5' : '1px solid rgba(255,255,255,.1)',
+            background: historyOpen ? 'rgba(46,116,181,.1)' : 'transparent',
+            cursor: 'pointer', transition: 'all 150ms',
+          }}
+        >
+          📜 History
+        </button>
+
+        {/* Save button */}
+        <button
+          onClick={() => setSaveModalOpen(true)}
+          disabled={!code.trim()}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            color: '#fff', border: 'none',
+            cursor: !code.trim() ? 'not-allowed' : 'pointer',
+            background: !code.trim()
+              ? 'rgba(139,148,158,.35)'
+              : 'linear-gradient(135deg,#F2A93B,#E15759)',
+            opacity: !code.trim() ? 0.5 : 1,
+            transition: 'all 150ms',
+          }}
+        >
+          💾 Save
+        </button>
+
         {/* Step counter */}
         {events.length > 0 && (
           <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 500 }}>
@@ -314,7 +421,7 @@ export default function Workspace() {
       </header>
 
       {/* ── SPLIT SCREEN ── */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, position: 'relative' }}>
 
         {/* Editor panel */}
         <EditorPanel
@@ -324,6 +431,7 @@ export default function Workspace() {
           editorCurrentLine={editorCurrentLine}
           errorLine={errorLine}
           errorMessage={errorMessage}
+          onDismissError={() => setErrorMessage('')}
           isPlaying={isPlaying}
         />
 
@@ -332,7 +440,20 @@ export default function Workspace() {
           moduleSlug={moduleSlug}
           currentEvent={currentEvent}
           totalSteps={events.length}
+          allEvents={events}
+          currentStep={stepIndex}
         />
+
+        {/* History sidebar */}
+        {historyOpen && (
+          <HistorySidebar
+            history={history}
+            loading={loadingHistory}
+            onLoad={handleLoadCode}
+            onDelete={handleDeleteCode}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
       </div>
 
       {/* ── PLAYBACK BAR ── */}
@@ -347,6 +468,13 @@ export default function Workspace() {
         onSpeedChange={setSpeed}
         displayStep={displayStep}
         displayTotal={displayTotal}
+      />
+
+      {/* Save code modal */}
+      <SaveCodeModal
+        open={saveModalOpen}
+        onClose={() => setSaveModalOpen(false)}
+        onSave={handleSaveCode}
       />
     </div>
   );
@@ -387,7 +515,7 @@ function SpinnerIcon() {
 }
 
 /* ── Resizable Panels ── */
-function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, isPlaying }) {
+function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying }) {
   const [editorWidth, setEditorWidth] = useState(50); // Percentage
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef(null);
@@ -433,6 +561,7 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
           currentLine={editorCurrentLine}
           errorLine={errorLine}
           errorMessage={errorMessage}
+          onDismissError={onDismissError}
           disabled={isPlaying}
         />
       </div>
@@ -474,7 +603,7 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
   );
 }
 
-function VisualizationPanel({ moduleSlug, currentEvent, totalSteps }) {
+function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <PanelLabel>Visualization</PanelLabel>
@@ -483,8 +612,238 @@ function VisualizationPanel({ moduleSlug, currentEvent, totalSteps }) {
           moduleSlug={moduleSlug}
           event={currentEvent}
           totalSteps={totalSteps}
+          allEvents={allEvents}
+          currentStep={currentStep + 1}
         />
       </div>
     </div>
   );
 }
+
+/* ── Save Code Modal ── */
+function SaveCodeModal({ open, onClose, onSave }) {
+  const [title, setTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setTitle('');
+      setError('');
+    }
+  }, [open]);
+
+  async function handleSave() {
+    if (!title.trim()) {
+      setError('Title is required');
+      return;
+    }
+    if (title.length > 200) {
+      setError('Title must be 200 characters or less');
+      return;
+    }
+    setSaving(true);
+    const success = await onSave(title.trim());
+    setSaving(false);
+    if (success) {
+      setTitle('');
+      setError('');
+    } else {
+      setError('Failed to save code');
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Save Code" width={480}>
+      <FormField label={`Title (${title.length}/200)`} error={error}>
+        <Input
+          value={title}
+          onChange={setTitle}
+          placeholder="Give your code a descriptive title"
+          maxLength={200}
+          disabled={saving}
+          onKeyPress={e => { if (e.key === 'Enter') handleSave(); }}
+        />
+      </FormField>
+      <div style={{
+        display: 'flex', gap: 10, justifyContent: 'flex-end',
+        paddingTop: 16, borderTop: '1px solid #e2e8f0', marginTop: 8,
+      }}>
+        <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save Code'}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── History Sidebar ── */
+function HistorySidebar({ history, loading, onLoad, onDelete, onClose }) {
+  const [copiedId, setCopiedId] = useState(null);
+  const [loadingCopy, setLoadingCopy] = useState(null);
+
+  async function handleCopy(snippet) {
+    try {
+      setLoadingCopy(snippet.SnippetId);
+      // Fetch full code if not available
+      let codeText = snippet.Code;
+      if (!codeText) {
+        const res = await loadCodeHistory(snippet.SnippetId);
+        codeText = res.data.snippet.Code;
+      }
+      await navigator.clipboard.writeText(codeText || '');
+      setCopiedId(snippet.SnippetId);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      alert('Failed to copy code');
+    } finally {
+      setLoadingCopy(null);
+    }
+  }
+
+  return (
+    <aside style={{
+      width: 320, flexShrink: 0, background: '#161b22',
+      borderLeft: '1px solid rgba(255,255,255,.08)',
+      display: 'flex', flexDirection: 'column',
+      position: 'absolute', right: 0, top: 0, bottom: 0,
+      zIndex: 100, boxShadow: '-4px 0 12px rgba(0,0,0,.3)',
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,.06)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: '#0d1117',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 16 }}>📜</span>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3', margin: 0 }}>
+            Code History
+          </h3>
+        </div>
+        <button onClick={onClose} style={{
+          width: 24, height: 24, borderRadius: 6, border: '1px solid rgba(255,255,255,.1)',
+          background: 'rgba(255,255,255,.05)', cursor: 'pointer',
+          color: '#8b949e', fontSize: 14, display: 'flex',
+          alignItems: 'center', justifyContent: 'center',
+        }}>✕</button>
+      </div>
+
+      {/* History list */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px', color: '#8b949e' }}>
+            Loading...
+          </div>
+        ) : history.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>📝</div>
+            <p style={{ fontSize: 13, color: '#8b949e', margin: 0 }}>
+              No saved code yet
+            </p>
+          </div>
+        ) : (
+          history.map(item => (
+            <div key={item.SnippetId} style={{
+              background: '#21262d', border: '1px solid rgba(255,255,255,.08)',
+              borderRadius: 10, padding: '12px', marginBottom: 10,
+              transition: 'all 150ms',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(46,116,181,.5)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.08)'; }}
+            >
+              <div style={{ marginBottom: 8 }}>
+                <div style={{
+                  fontSize: 13, fontWeight: 600, color: '#e6edf3',
+                  marginBottom: 4, lineHeight: 1.4,
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>{item.Title}</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{
+                    fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                    background: 'rgba(46,116,181,.2)', color: '#58a6ff',
+                    fontWeight: 600,
+                  }}>{LANG_LABELS[item.Language] || item.Language}</span>
+                  {item.ModuleSlug && (
+                    <span style={{
+                      fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                      background: 'rgba(76,175,80,.2)', color: '#7ee787',
+                      fontWeight: 600,
+                    }}>{item.ModuleSlug}</span>
+                  )}
+                </div>
+              </div>
+              <div style={{
+                fontSize: 10, color: '#8b949e', marginBottom: 10,
+              }}>
+                {new Date(item.CreatedAt).toLocaleDateString('en-IN', {
+                  day: 'numeric', month: 'short', year: 'numeric',
+                  hour: '2-digit', minute: '2-digit'
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => onLoad(item.SnippetId)}
+                  style={{
+                    flex: 1, padding: '6px 10px', borderRadius: 6,
+                    background: 'rgba(46,116,181,.15)', border: '1px solid rgba(46,116,181,.3)',
+                    color: '#58a6ff', fontSize: 11, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 150ms',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(46,116,181,.25)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(46,116,181,.15)'; }}
+                >
+                  Load
+                </button>
+                <button
+                  onClick={() => handleCopy(item)}
+                  disabled={loadingCopy === item.SnippetId}
+                  style={{
+                    flex: 1, padding: '6px 10px', borderRadius: 6,
+                    background: copiedId === item.SnippetId ? 'rgba(76,175,80,.15)' : 'rgba(242,169,59,.15)',
+                    border: copiedId === item.SnippetId ? '1px solid rgba(76,175,80,.3)' : '1px solid rgba(242,169,59,.3)',
+                    color: copiedId === item.SnippetId ? '#7ee787' : '#d29922',
+                    fontSize: 11, fontWeight: 600,
+                    cursor: loadingCopy === item.SnippetId ? 'wait' : 'pointer',
+                    transition: 'all 150ms',
+                    opacity: loadingCopy === item.SnippetId ? 0.6 : 1,
+                  }}
+                  onMouseEnter={e => {
+                    if (copiedId !== item.SnippetId && loadingCopy !== item.SnippetId) {
+                      e.currentTarget.style.background = 'rgba(242,169,59,.25)';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (copiedId !== item.SnippetId && loadingCopy !== item.SnippetId) {
+                      e.currentTarget.style.background = 'rgba(242,169,59,.15)';
+                    }
+                  }}
+                >
+                  {loadingCopy === item.SnippetId ? '...' : copiedId === item.SnippetId ? '✓ Copied' : '📋 Copy'}
+                </button>
+                <button
+                  onClick={() => onDelete(item.SnippetId)}
+                  style={{
+                    padding: '6px 10px', borderRadius: 6,
+                    background: 'rgba(225,87,89,.15)', border: '1px solid rgba(225,87,89,.3)',
+                    color: '#f85149', fontSize: 11, fontWeight: 600,
+                    cursor: 'pointer', transition: 'all 150ms',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(225,87,89,.25)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(225,87,89,.15)'; }}
+                  title="Delete"
+                >
+                  🗑
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </aside>
+  );
+}
+

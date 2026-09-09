@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import FeedbackModal from './FeedbackModal';
 
 /* ── nav items ── */
 const NAV = [
   { to: '/dashboard',  icon: '⊞', label: 'Modules'   },
   { to: '/workspace',  icon: '⌨', label: 'Workspace'  },
+  { to: '/profile',    icon: '👤', label: 'Profile'    },
 ];
 const ADMIN_NAV = [
   { to: '/admin', icon: '⚙', label: 'Admin'  },
@@ -54,6 +56,7 @@ export default function AppShell({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const sideW = collapsed ? 64 : 240;
 
@@ -143,12 +146,15 @@ export default function AppShell({ children }) {
           gap: 10, flexShrink: 0,
           justifyContent: collapsed ? 'center' : 'flex-start',
         }}>
-          <div style={{
-            width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
-            background: 'linear-gradient(135deg,#1F4E79,#2E74B5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 12, fontWeight: 700, color: '#fff',
-          }}>{initials}</div>
+          <div
+            onClick={() => navigate('/profile')}
+            title="View Profile"
+            style={{
+              width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg,#1F4E79,#2E74B5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer',
+            }}>{initials}</div>
           {!collapsed && (
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <div style={{
@@ -188,6 +194,32 @@ export default function AppShell({ children }) {
         }}>
           <Breadcrumb />
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* Feedback Button */}
+            <button
+              onClick={() => setFeedbackOpen(true)}
+              title="Send Feedback"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 8,
+                background: '#f8fafc', border: '1px solid #e2e8f0',
+                color: '#64748b', fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', transition: 'all 150ms',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = '#EFF6FF';
+                e.currentTarget.style.borderColor = '#2E74B5';
+                e.currentTarget.style.color = '#2E74B5';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = '#f8fafc';
+                e.currentTarget.style.borderColor = '#e2e8f0';
+                e.currentTarget.style.color = '#64748b';
+              }}
+            >
+              <span style={{ fontSize: 14 }}>💬</span>
+              Feedback
+            </button>
+
             {user?.Role === 'admin' && (
               <span style={{
                 padding: '3px 10px', borderRadius: 999,
@@ -211,6 +243,9 @@ export default function AppShell({ children }) {
           {children}
         </main>
       </div>
+
+      {/* Feedback Modal */}
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
   );
 }
@@ -220,6 +255,7 @@ function Breadcrumb() {
   const map = {
     '/dashboard': { label: 'Module Catalog',  icon: '⊞' },
     '/workspace': { label: 'Workspace',        icon: '⌨' },
+    '/profile':   { label: 'Profile',          icon: '👤' },
     '/admin':     { label: 'Admin Dashboard',  icon: '⚙' },
   };
   const current = map[pathname] || { label: 'DSVP', icon: '⊞' };

@@ -29,6 +29,19 @@ export const runCode = (payload) => api.post('/execution/run', payload);
 export const createPaymentOrder = (payload) => api.post('/payments/create-order', payload);
 export const verifyPayment = (payload) => api.post('/payments/verify', payload);
 
+// -------- User Feedback --------
+export const submitFeedback = (payload) => api.post('/users/feedback', payload);
+
+// -------- Profile --------
+export const updateProfile  = (payload) => api.patch('/users/profile', payload);
+export const changePassword = (payload) => api.patch('/users/password', payload);
+
+// -------- Code History --------
+export const saveCodeHistory = (payload) => api.post('/users/code-history/save', payload);
+export const getCodeHistory = (params = {}) => api.get('/users/code-history', { params });
+export const loadCodeHistory = (id) => api.get(`/users/code-history/${id}`);
+export const deleteCodeHistory = (id) => api.delete(`/users/code-history/${id}`);
+
 // -------- Admin — Overview --------
 export const getAdminDashboard  = ()            => api.get('/admin/dashboard');
 export const getAdminAnalytics  = (days = 7)    => api.get(`/admin/analytics?days=${days}`);

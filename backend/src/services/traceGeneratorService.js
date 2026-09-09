@@ -51,7 +51,7 @@ function buildArrayEvt(s, stepNo, op, ctx, userOutput) {
 
   let activeIndex = (typeof s.idx === 'number' && s.idx >= 0) ? s.idx : null;
   let secondIndex = null;
-  let value       = typeof s.val === 'number' ? s.val : null;
+  let value       = s.val !== undefined && s.val !== null ? s.val : null;
   let description = '';
 
   switch (op) {

@@ -60,18 +60,31 @@ async function runAndTrace(req, res, next) {
     /* ── 4. Persist (best-effort — don't fail the request if DB is down) ── */
     try {
       const pool = await getPool();
+
+      // Resolve moduleSlug → ModuleId
+      let moduleId = null;
+      if (moduleSlug) {
+        const modResult = await pool.request()
+          .input('Slug', sql.NVarChar(100), moduleSlug)
+          .query('SELECT ModuleId FROM dbo.Modules WHERE Slug = @Slug');
+        if (modResult.recordset.length > 0) {
+          moduleId = modResult.recordset[0].ModuleId;
+        }
+      }
+
       await pool
         .request()
         .input('UserId',          sql.Int,                req.user.userId)
+        .input('ModuleId',        sql.Int,                moduleId)
         .input('Language',        sql.VarChar(20),        language)
         .input('SourceCode',      sql.NVarChar(sql.MAX),  code)
         .input('TraceEventsJson', sql.NVarChar(sql.MAX),  JSON.stringify(events))
         .input('Status',          sql.VarChar(20),        'success')
         .query(`
           INSERT INTO dbo.ExecutionTraces
-            (UserId, Language, SourceCode, TraceEventsJson, Status)
+            (UserId, ModuleId, Language, SourceCode, TraceEventsJson, Status)
           VALUES
-            (@UserId, @Language, @SourceCode, @TraceEventsJson, @Status)
+            (@UserId, @ModuleId, @Language, @SourceCode, @TraceEventsJson, @Status)
         `);
     } catch (dbErr) {
       console.error('[executionController] DB persist failed (non-fatal):', dbErr.message);
