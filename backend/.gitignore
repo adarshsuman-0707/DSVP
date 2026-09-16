@@ -1,5 +1,6 @@
 # Logs
 .env
+**/.env
 .env.example
 logs
 *.log
