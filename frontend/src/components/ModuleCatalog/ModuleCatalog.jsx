@@ -6,14 +6,24 @@ import { getModules } from '../../services/api';
 const FILTERS = ['all', 'free', 'premium'];
 
 const STRUCT_ICONS = {
-  'linked-list': '⛓',
-  'array':       '▦',
-  'stack':       '📚',
-  'queue':       '🚦',
-  'tree':        '🌳',
-  'graph':       '🕸',
-  'hash-table':  '#',
-  'heap':        '⛰',
+  'linked-list':         '⛓',
+  'doubly-linked-list':  '⇌',
+  'array':               '▦',
+  'stack':               '📚',
+  'queue':               '🚦',
+  'tree':                '🌳',
+  'binary-tree':         '🌳',
+  'bst':                 '🌲',
+  'avl-tree':            '⚖',
+  'graph':               '🕸',
+  'hash-table':          '#',
+  'hashing':             '#',
+  'heap':                '⛰',
+  'sorting':             '↕',
+  'trie':                '🔤',
+  'dynamic-programming': '🧮',
+  'segment-tree':        '📊',
+  'red-black-tree':      '🔴',
 };
 
 export default function ModuleCatalog() {

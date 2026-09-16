@@ -82,13 +82,13 @@ public class JavaInstrumenter {
             ArrayInstrumentVisitor arrayPass = new ArrayInstrumentVisitor();
             arrayPass.visit(cu, null);
 
+            CallTraceInstrumentVisitor callPass = new CallTraceInstrumentVisitor();
+            callPass.visit(cu, null);
+
             // LinkedList auto-instrumentation — detects user-defined Node classes
             // and injects trace calls after every .next assignment and in loop bodies
             LinkedListInstrumentVisitor llPass = new LinkedListInstrumentVisitor();
             llPass.visit(cu, null);
-
-            CallTraceInstrumentVisitor callPass = new CallTraceInstrumentVisitor();
-            callPass.visit(cu, null);
         }
 
         String printed = cu.toString();

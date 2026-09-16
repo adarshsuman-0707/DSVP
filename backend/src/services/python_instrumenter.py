@@ -701,19 +701,22 @@ def _make_tracer(source_lines):
             prev_locals_by_frame[id(frame)] = dict(locals_snap)
             _emit_line(func_name, depth, line_no, _source_at(line_no), locals_snap, changed)
 
-            # ── LinkedList class auto-detection ──────────────────────────
-            # After each line, check if any local variable is a node-like
-            # object whose class hasn't been patched yet.
+            # ── LinkedList class auto-detection & traversal ──────────────
             try:
                 for v in frame.f_locals.values():
                     if _is_node_like(v) and id(type(v)) not in _LL_PATCHED_CLASSES:
                         _patch_node_class(type(v))
-                        # Register it and emit initial snapshot
                         _LL_REGISTRY[id(v)] = v
-                        _emit_ll("ll_init", id(v), "Linked list detected", _LL_REGISTRY)
+                        _emit_ll("ll_init", id(v), f"Created Node({_node_val(v)})", _LL_REGISTRY)
                     elif _is_node_like(v):
-                        # Already patched — just make sure it's registered
                         _LL_REGISTRY[id(v)] = v
+
+                # Detect when a pointer variable (like cur, temp, ptr) moved in this step
+                for k in changed:
+                    val = frame.f_locals.get(k)
+                    if _is_node_like(val):
+                        _LL_REGISTRY[id(val)] = val
+                        _emit_ll("ll_traverse", id(val), f"Traversing: {k} -> Node({_node_val(val)})", _LL_REGISTRY)
             except Exception:
                 pass
 
@@ -948,22 +951,35 @@ class _NodeProxy:
 _LL_PATCHED_CLASSES = set()  # set of class ids already patched
 
 def _patch_node_class(cls):
-    """Monkey-patch cls.__setattr__ to emit ll_snap on next/data/val changes."""
+    """Monkey-patch cls to cleanly trace node creation and pointer mutations."""
     if id(cls) in _LL_PATCHED_CLASSES:
         return
     _LL_PATCHED_CLASSES.add(id(cls))
     original_init    = cls.__init__  if hasattr(cls, '__init__')    else None
     original_setattr = cls.__setattr__ if hasattr(cls, '__setattr__') else object.__setattr__
 
+    def _dsvp_init(self, *args, **kwargs):
+        object.__setattr__(self, '_dsvp_in_init', True)
+        try:
+            if original_init:
+                original_init(self, *args, **kwargs)
+        finally:
+            object.__setattr__(self, '_dsvp_in_init', False)
+        _LL_REGISTRY[id(self)] = self
+
     def _dsvp_setattr(self, name, value):
         original_setattr(self, name, value)
-        # Register this node
         _LL_REGISTRY[id(self)] = self
-        # If next pointer changed or it's a data attribute, emit snapshot
-        if name in ('next', 'prev', 'data', 'val', 'value', 'key', 'item'):
-            _emit_ll("ll_update", id(self),
-                     f"node.{name} = {value!r}", _LL_REGISTRY)
+        # Don't emit intermediate noise while __init__ is running
+        if getattr(self, '_dsvp_in_init', False):
+            return
+        if name in ('next', 'prev'):
+            val_desc = f"Node({_node_val(value)})" if _is_node_like(value) else ('None' if value is None else repr(value))
+            _emit_ll("ll_update", id(self), f"node.{name} = {val_desc}", _LL_REGISTRY)
+        elif name in ('data', 'val', 'value', 'key', 'item'):
+            _emit_ll("ll_update", id(self), f"node.{name} = {value!r}", _LL_REGISTRY)
 
+    cls.__init__ = _dsvp_init
     cls.__setattr__ = _dsvp_setattr
 
 

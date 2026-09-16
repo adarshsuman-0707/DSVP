@@ -37,6 +37,7 @@ public class CallTraceInstrumentVisitor extends VoidVisitorAdapter<Void> {
 
         BlockStmt body = m.getBody().get();
         String methodName = m.getNameAsString();
+        if (methodName.startsWith("_dsvp")) return;
 
         // Seed "locals in scope" with the method's own parameters.
         List<String> paramNames = new ArrayList<>();

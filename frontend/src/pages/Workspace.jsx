@@ -3,19 +3,13 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import CodeEditor from '../components/Editor/CodeEditor';
 import VisualizationCanvas from '../components/Visualization/VisualizationCanvas';
 import PlaybackBar from '../components/PlaybackBar/PlaybackBar';
-import { runCode } from '../services/api';
+import { runCode, getModules } from '../services/api';
 import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory } from '../services/api';
 import { Modal, FormField, Input, Btn } from '../components/AdminDashboard/ui';
+import { useAuth } from '../context/AuthContext';
 
 const LANGUAGES = ['python', 'cpp', 'java', 'c', 'csharp'];
 const LANG_LABELS = { python: 'Python', cpp: 'C++', java: 'Java', c: 'C', csharp: 'C#' };
-
-const MODULES = [
-  { slug: 'array',       label: 'Array'       },
-  { slug: 'linked-list', label: 'Linked List' },
-  { slug: 'stack',       label: 'Stack'       },
-  { slug: 'queue',       label: 'Queue'       },
-];
 
 /* ── Starter code: STARTER[moduleSlug][language] ── */
 const STARTER = {
@@ -207,10 +201,39 @@ class Main {
   },
 };
 
+// ── Module icons for dropdown ──
+const MODULE_ICONS = {
+  'array':               '▦',
+  'linked-list':         '⛓',
+  'doubly-linked-list':  '⇌',
+  'stack':               '📚',
+  'queue':               '🚦',
+  'sorting':             '↕',
+  'binary-tree':         '🌳',
+  'bst':                 '🌲',
+  'avl-tree':            '⚖',
+  'heap':                '⛰',
+  'graph':               '🕸',
+  'trie':                '🔤',
+  'hashing':             '#',
+  'dynamic-programming': '🧮',
+  'segment-tree':        '📊',
+  'red-black-tree':      '🔴',
+};
+
 export default function Workspace() {
   const [searchParams]                  = useSearchParams();
   const navigate                        = useNavigate();
   const initialSlug                     = searchParams.get('module') || 'array';
+  const { user }                        = useAuth();
+
+  // Modules loaded from API
+  const [allModules, setAllModules]     = useState([]);
+
+  // Load all modules on mount
+  useEffect(() => {
+    getModules('all').then(res => setAllModules(res.data.modules || [])).catch(() => {});
+  }, []);
 
   const [language, setLanguage]         = useState('python');
   const [moduleSlug, setModuleSlug]     = useState(initialSlug);
@@ -251,7 +274,7 @@ export default function Workspace() {
   /* Update starter code when language changes */
   function handleLanguageChange(lang) {
     setLanguage(lang);
-    setCode(STARTER[lang] || '');
+    setCode((STARTER[moduleSlug]?.[lang]) || STARTER['array'][lang] || '');
     clearRun();
   }
 
@@ -434,10 +457,36 @@ export default function Workspace() {
           <span style={labelStyle}>Module</span>
           <select
             value={moduleSlug}
-            onChange={e => { setModuleSlug(e.target.value); clearRun(); }}
+            onChange={e => {
+                const slug = e.target.value;
+                // Block if premium and no access
+                const mod = allModules.find(m => m.Slug === slug);
+                if (mod && mod.IsPremium && !user?.IsPremium) {
+                  navigate('/pricing');
+                  return;
+                }
+                setModuleSlug(slug);
+                setCode((STARTER[slug]?.[language]) || STARTER['array'][language] || '');
+                clearRun();
+              }}
             style={selectStyle}
           >
-            {MODULES.map(m => <option key={m.slug} value={m.slug}>{m.label}</option>)}
+            {allModules.length === 0 ? (
+              // Fallback while loading
+              ['array','linked-list','doubly-linked-list','stack','queue'].map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))
+            ) : (
+              allModules.map(m => {
+                const locked = m.IsPremium && !user?.IsPremium;
+                const icon   = MODULE_ICONS[m.Slug] || '◈';
+                return (
+                  <option key={m.Slug} value={m.Slug}>
+                    {locked ? '🔒 ' : icon + ' '}{m.Name}{locked ? ' (Premium)' : ''}
+                  </option>
+                );
+              })
+            )}
           </select>
         </div>
 

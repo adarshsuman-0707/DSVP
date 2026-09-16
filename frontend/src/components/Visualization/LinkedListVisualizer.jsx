@@ -1,19 +1,91 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 
 /**
- * LinkedListVisualizer
- * ─────────────────────
- * Renders a singly linked list as animated node boxes with arrows.
- *
- * Props:
- *   linkedListState : [{id, val, nextId, isHead}, ...]
- *   activeNodeId    : number  — highlighted node (-1 = none)
- *   type            : string  — ll_snap | ll_init | ll_insert | ll_delete | ll_traverse
- *   description     : string
- *   step            : number
- *   totalSteps      : number
- *   userOutput      : string
+ * LinkedListVisualizer — v2 (Fixed Edition)
+ * ──────────────────────────────────────────
+ * FIX-1 ▸ Stable SVG marker IDs via SharedArrowDefs — eliminates flicker
+ * FIX-2 ▸ Clear address labeling: "Addr: 0xXXX" on node header + arrow annotations
+ * FIX-3 ▸ Cycle detection + Bezier arc overlay for backward/cycle pointers
  */
+
+/* ══════════════════════════════════════════════════════
+   FIX-1: Shared SVG Defs — ONE definition, stable IDs
+   All arrow SVGs in the document reference these via url(#...)
+   This eliminates per-SVG <defs> that caused ID collisions & flicker.
+   ══════════════════════════════════════════════════════ */
+function SharedArrowDefs() {
+  return (
+    <svg
+      width="0"
+      height="0"
+      style={{ position: 'absolute', overflow: 'hidden', pointerEvents: 'none' }}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        {/* Singly forward — inactive */}
+        <marker id="ll-fwd-inactive" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="rgba(148,163,184,0.55)" />
+        </marker>
+        {/* Singly forward — active cyan (traverse / snap) */}
+        <marker id="ll-fwd-active" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#38bdf8" />
+        </marker>
+        {/* Singly forward — insert green */}
+        <marker id="ll-fwd-insert" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#34d399" />
+        </marker>
+        {/* Singly forward — delete red */}
+        <marker id="ll-fwd-delete" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#f87171" />
+        </marker>
+        {/* Doubly PREV arrow — violet */}
+        <marker id="ll-prev-h" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#818cf8" />
+        </marker>
+        {/* Doubly PREV arrow — active violet */}
+        <marker id="ll-prev-h-active" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#c4b5fd" />
+        </marker>
+        {/* Doubly NEXT arrow — cyan */}
+        <marker id="ll-next-h" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#38bdf8" />
+        </marker>
+        {/* Doubly NEXT arrow — active cyan */}
+        <marker id="ll-next-h-active" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#60a5fa" />
+        </marker>
+        {/* Cycle / backward pointer — orange */}
+        <marker id="ll-cycle" viewBox="0 0 10 10" refX="8" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1 L 9 5 L 0 9 z" fill="#f97316" />
+        </marker>
+      </defs>
+    </svg>
+  );
+}
+
+/** Returns the stable marker-end URL for singly arrows based on active state + type */
+function getFwdMarkerId(isActive, type) {
+  if (!isActive) return 'url(#ll-fwd-inactive)';
+  switch (type) {
+    case 'll_insert':   return 'url(#ll-fwd-insert)';
+    case 'll_delete':   return 'url(#ll-fwd-delete)';
+    default:            return 'url(#ll-fwd-active)';
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   Main Component
+   ══════════════════════════════════════════════════════ */
 export default function LinkedListVisualizer({
   linkedListState = [],
   activeNodeId    = -1,
@@ -23,14 +95,45 @@ export default function LinkedListVisualizer({
   totalSteps      = 0,
   userOutput      = '',
 }) {
-  // Flash set: node ids that just changed
-  const [flashSet, setFlashSet]   = useState(new Set());
-  const prevStateRef              = useRef([]);
-  const [stdoutH, setStdoutH]     = useState(120);
-  const [resizing, setResizing]   = useState(false);
-  const containerRef              = useRef(null);
+  const [flashSet, setFlashSet]           = useState(new Set());
+  const prevStateRef                       = useRef([]);
+  const [stdoutH, setStdoutH]             = useState(110);
+  const [resizing, setResizing]           = useState(false);
+  const [zoom, setZoom]                   = useState(1);
+  const [layoutMode, setLayoutMode]       = useState('wrap'); // 'wrap' | 'horizontal'
+  const [showAddresses, setShowAddresses] = useState(true);
+  const containerRef                       = useRef(null);
 
-  /* ── flash detection ── */
+  // Detect Doubly Linked List
+  const isDoubly = useMemo(() => {
+    return linkedListState.some(
+      n => n.prevId !== undefined && n.prevId !== null && n.prevId !== -1
+    );
+  }, [linkedListState]);
+
+  // Generate deterministic hex memory addresses
+  const addrMap = useMemo(() => {
+    const map = new Map();
+    linkedListState.forEach((node, idx) => {
+      const hash = typeof node.id === 'number' && node.id < 1000
+        ? (0x100 + node.id * 0x30)
+        : (0x100 + ((Math.abs(Number(node.id) || idx)) % 0x8FF));
+      map.set(node.id, '0x' + hash.toString(16).toUpperCase().padStart(3, '0'));
+    });
+    return map;
+  }, [linkedListState]);
+
+  const headNode = useMemo(() => {
+    return linkedListState.find(n => n.isHead) || linkedListState[0] || null;
+  }, [linkedListState]);
+
+  const tailNode = useMemo(() => {
+    if (linkedListState.length === 0) return null;
+    return linkedListState.find(n => n.nextId === null || n.nextId === -1 || n.nextId === undefined) ||
+           linkedListState[linkedListState.length - 1];
+  }, [linkedListState]);
+
+  /* ── Flash & mutation detection ── */
   useEffect(() => {
     const prev    = prevStateRef.current;
     const prevMap = new Map(prev.map(n => [n.id, n]));
@@ -38,32 +141,34 @@ export default function LinkedListVisualizer({
 
     linkedListState.forEach(n => {
       const p = prevMap.get(n.id);
-      if (!p || p.val !== n.val || p.nextId !== n.nextId) changed.add(n.id);
+      if (!p || p.val !== n.val || p.nextId !== n.nextId || p.prevId !== n.prevId) {
+        changed.add(n.id);
+      }
     });
-    if (activeNodeId !== -1) changed.add(activeNodeId);
+    if (activeNodeId !== -1 && activeNodeId !== null) {
+      changed.add(activeNodeId);
+    }
 
     setFlashSet(changed);
     prevStateRef.current = linkedListState;
-    const t = setTimeout(() => setFlashSet(new Set()), 500);
+    const t = setTimeout(() => setFlashSet(new Set()), 600);
     return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedListState, activeNodeId]);
 
-  /* ── stdout panel resize ── */
+  /* ── Stdout drawer resize ── */
   useEffect(() => {
     if (!resizing) return;
     const onMove = e => {
       if (!containerRef.current) return;
-      const r   = containerRef.current.getBoundingClientRect();
-      const nh  = r.bottom - e.clientY;
-      setStdoutH(Math.max(50, Math.min(360, nh)));
+      const r = containerRef.current.getBoundingClientRect();
+      setStdoutH(Math.max(50, Math.min(360, r.bottom - e.clientY)));
     };
     const onUp = () => setResizing(false);
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',  onUp);
+    document.addEventListener('mouseup', onUp);
     return () => {
       document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',  onUp);
+      document.removeEventListener('mouseup', onUp);
     };
   }, [resizing]);
 
@@ -74,97 +179,271 @@ export default function LinkedListVisualizer({
       ref={containerRef}
       style={{
         display: 'flex', flexDirection: 'column', height: '100%',
-        background: '#0d1117', fontFamily: "'Inter', system-ui, sans-serif",
+        background: '#090d16',
+        backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(30, 58, 138, 0.15) 0%, transparent 70%), radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
+        backgroundSize: '100% 100%, 20px 20px',
+        fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
         overflow: 'hidden', userSelect: resizing ? 'none' : 'auto',
+        position: 'relative',
       }}
     >
-      {/* ── header ── */}
-      <div style={{
+      {/* FIX-1: Single shared defs island — renders once, no flicker */}
+      <SharedArrowDefs />
+
+      {/* ── TOP CONTROL & STATS BAR ── */}
+      <header style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 20px', borderBottom: '1px solid rgba(255,255,255,.07)',
-        flexShrink: 0,
+        padding: '10px 18px',
+        background: 'rgba(15, 23, 42, 0.75)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        borderBottom: '1px solid rgba(255,255,255,.08)',
+        flexShrink: 0, gap: 12, flexWrap: 'wrap',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#8b949e',
-            textTransform: 'uppercase', letterSpacing: '.06em' }}>
-            Linked List
-          </span>
-          {linkedListState.length > 0 && (
+        {/* Left: Module Badge & Live Stats */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 10px', borderRadius: 8,
+            background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(139, 92, 246, 0.2))',
+            border: '1px solid rgba(96, 165, 250, 0.3)',
+          }}>
+            <span style={{ fontSize: 13 }}>{isDoubly ? '⇄' : '⛓'}</span>
             <span style={{
-              padding: '2px 8px', borderRadius: 999,
-              background: 'rgba(46,116,181,.2)', color: '#60a5fa',
-              fontSize: 11, fontWeight: 600,
-            }}>{linkedListState.length} node{linkedListState.length !== 1 ? 's' : ''}</span>
+              fontSize: 11, fontWeight: 700, color: '#e2e8f0',
+              textTransform: 'uppercase', letterSpacing: '.06em',
+            }}>
+              {isDoubly ? 'Doubly Linked List' : 'Linked List'}
+            </span>
+          </div>
+
+          {/* Node count pill */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '3px 9px', borderRadius: 999,
+            background: 'rgba(56, 189, 248, 0.1)',
+            border: '1px solid rgba(56, 189, 248, 0.25)',
+            fontSize: 11, fontWeight: 600, color: '#38bdf8',
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
+            {linkedListState.length} {linkedListState.length === 1 ? 'Node' : 'Nodes'}
+          </div>
+
+          {/* Head peek pill */}
+          {headNode && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '3px 8px', borderRadius: 6,
+              background: 'rgba(245, 158, 11, 0.12)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              fontSize: 11, fontWeight: 600, color: '#f59e0b',
+            }}>
+              <span style={{ fontSize: 9, opacity: 0.8 }}>HEAD</span>
+              <span>[{headNode.val}]</span>
+            </div>
+          )}
+
+          {/* Tail peek pill */}
+          {tailNode && tailNode !== headNode && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '3px 8px', borderRadius: 6,
+              background: 'rgba(20, 184, 166, 0.12)',
+              border: '1px solid rgba(20, 184, 166, 0.3)',
+              fontSize: 11, fontWeight: 600, color: '#2dd4bf',
+            }}>
+              <span style={{ fontSize: 9, opacity: 0.8 }}>TAIL</span>
+              <span>[{tailNode.val}]</span>
+            </div>
+          )}
+
+          {/* Active Operation pill */}
+          <OperationBadge type={type} />
+        </div>
+
+        {/* Right: View & Zoom Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Memory addresses toggle */}
+          <button
+            onClick={() => setShowAddresses(v => !v)}
+            title="Toggle Memory Addresses (0x...)"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '4px 8px', borderRadius: 6,
+              background: showAddresses ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${showAddresses ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255,255,255,0.1)'}`,
+              color: showAddresses ? '#a5b4fc' : '#94a3b8',
+              fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'all 150ms',
+            }}
+          >
+            <span>0x</span>
+            <span>Addr</span>
+          </button>
+
+          {/* Layout Mode Toggle */}
+          <button
+            onClick={() => setLayoutMode(m => m === 'wrap' ? 'horizontal' : 'wrap')}
+            title={layoutMode === 'wrap' ? 'Switch to Continuous Horizontal Line' : 'Switch to Snake Row Wrap'}
+            style={{
+              padding: '4px 8px', borderRadius: 6,
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#94a3b8', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            {layoutMode === 'wrap' ? '⤾ Wrap' : '→ Line'}
+          </button>
+
+          {/* Zoom controls */}
+          <div style={{
+            display: 'flex', alignItems: 'center',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 6, overflow: 'hidden',
+          }}>
+            <button
+              onClick={() => setZoom(z => Math.max(0.6, Math.round((z - 0.1) * 10) / 10))}
+              disabled={zoom <= 0.6}
+              title="Zoom out"
+              style={{
+                padding: '3px 8px', background: 'none', border: 'none',
+                color: zoom <= 0.6 ? '#475569' : '#cbd5e1', fontSize: 13, cursor: zoom <= 0.6 ? 'default' : 'pointer',
+              }}
+            >−</button>
+            <span
+              onClick={() => setZoom(1)}
+              title="Reset Zoom to 100%"
+              style={{
+                padding: '0 5px', fontSize: 11, fontWeight: 600,
+                color: zoom === 1 ? '#64748b' : '#38bdf8', cursor: 'pointer',
+              }}
+            >
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              onClick={() => setZoom(z => Math.min(1.5, Math.round((z + 0.1) * 10) / 10))}
+              disabled={zoom >= 1.5}
+              title="Zoom in"
+              style={{
+                padding: '3px 8px', background: 'none', border: 'none',
+                color: zoom >= 1.5 ? '#475569' : '#cbd5e1', fontSize: 13, cursor: zoom >= 1.5 ? 'default' : 'pointer',
+              }}
+            >+</button>
+          </div>
+
+          {/* Step indicator */}
+          {step > 0 && (
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: '#94a3b8',
+              letterSpacing: '.04em', minWidth: 65, textAlign: 'right',
+            }}>
+              Step <span style={{ color: '#f1f5f9' }}>{step}</span>
+              {totalSteps > 0 && <span style={{ opacity: 0.6 }}>/{totalSteps}</span>}
+            </div>
           )}
         </div>
-        {step > 0 && (
-          <span style={{ fontSize: 11, color: '#64748b' }}>
-            Step {step}{totalSteps > 0 ? ` / ${totalSteps}` : ''}
-          </span>
-        )}
-      </div>
+      </header>
 
-      {/* ── description bar ── */}
+      {/* ── FLOATING STEP ACTION BANNER ── */}
       {description && (
         <div style={{
-          padding: '8px 20px', background: 'rgba(255,255,255,.03)',
-          borderBottom: '1px solid rgba(255,255,255,.05)',
-          fontSize: 12, color: getTypeColor(type), fontWeight: 500,
-          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8,
+          margin: '12px 20px 0',
+          padding: '8px 16px',
+          borderRadius: 10,
+          background: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          flexShrink: 0,
         }}>
-          <span style={{ fontSize: 14 }}>{getTypeIcon(type)}</span>
-          {description}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 16 }}>{getTypeIcon(type)}</span>
+            <span style={{
+              fontSize: 12.5, fontWeight: 600,
+              color: getTypeColor(type), letterSpacing: '.01em',
+            }}>
+              {description}
+            </span>
+          </div>
+
+          {activeNodeId !== -1 && activeNodeId !== null && addrMap.has(activeNodeId) && (
+            <span style={{
+              fontSize: 11, fontWeight: 600, color: '#94a3b8',
+              fontFamily: "'JetBrains Mono', monospace",
+              padding: '2px 8px', borderRadius: 4,
+              background: 'rgba(255,255,255,0.06)',
+            }}>
+              Active: {addrMap.get(activeNodeId)}
+            </span>
+          )}
         </div>
       )}
 
-      {/* ── main canvas ── */}
-      <div style={{
-        flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'auto',
-        padding: '40px 28px',
+      {/* ── MAIN INTERACTIVE CANVAS ── */}
+      <main style={{
+        flex: 1, minHeight: 0, overflow: 'auto',
+        padding: isDoubly ? '48px 32px 32px' : '36px 32px 32px',
         display: 'flex', alignItems: 'flex-start',
       }}>
-        {empty ? (
-          <EmptyHint />
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-            {/* Render in rows of up to 6 nodes, wrapping with back-arrows */}
+        <div style={{
+          transform: `scale(${zoom})`,
+          transformOrigin: 'top left',
+          transition: 'transform 180ms ease-out',
+          minWidth: 'fit-content',
+        }}>
+          {empty ? (
+            <EmptyHint isDoubly={isDoubly} />
+          ) : (
             <NodeChain
               nodes={linkedListState}
               activeNodeId={activeNodeId}
               flashSet={flashSet}
               type={type}
+              isDoubly={isDoubly}
+              layoutMode={layoutMode}
+              showAddresses={showAddresses}
+              addrMap={addrMap}
             />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </main>
 
-      {/* ── stdout panel ── */}
+      {/* ── STDOUT TERMINAL DRAWER ── */}
       {userOutput && (
         <>
           <div
             onMouseDown={() => setResizing(true)}
+            title="Drag to resize terminal output"
             style={{
-              height: 4, cursor: 'row-resize', flexShrink: 0,
-              background: resizing ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+              height: 5, cursor: 'row-resize', flexShrink: 0,
+              background: resizing ? 'rgba(56, 189, 248, 0.7)' : 'rgba(255,255,255,0.08)',
+              transition: resizing ? 'none' : 'background 150ms',
             }}
           />
-          <div style={{
-            height: stdoutH, flexShrink: 0, background: '#010409',
-            borderTop: '1px solid rgba(255,255,255,.06)',
+          <section style={{
+            height: stdoutH, flexShrink: 0,
+            background: '#040711',
+            borderTop: '1px solid rgba(255,255,255,.07)',
             display: 'flex', flexDirection: 'column',
           }}>
             <div style={{
-              padding: '5px 14px', fontSize: 10, fontWeight: 700,
-              color: '#8b949e', textTransform: 'uppercase', letterSpacing: '.06em',
+              padding: '6px 16px', fontSize: 10, fontWeight: 700,
+              color: '#64748b', textTransform: 'uppercase', letterSpacing: '.08em',
               borderBottom: '1px solid rgba(255,255,255,.04)', flexShrink: 0,
-            }}>Output</div>
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+              Program Output
+            </div>
             <pre style={{
               flex: 1, overflow: 'auto', margin: 0,
-              padding: '10px 14px', fontSize: 12,
-              color: '#e6edf3', fontFamily: "'JetBrains Mono', monospace",
-              lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              padding: '10px 16px', fontSize: 12, color: '#f8fafc',
+              fontFamily: "'JetBrains Mono', Consolas, monospace",
+              lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>{userOutput}</pre>
-          </div>
+          </section>
         </>
       )}
     </div>
@@ -172,106 +451,262 @@ export default function LinkedListVisualizer({
 }
 
 /* ══════════════════════════════════════════════════════
-   NodeChain — renders the list with row-wrapping
+   NodeChain Layout Engine + FIX-3 Cycle Detection
    ══════════════════════════════════════════════════════ */
-const ROW_SIZE = 6; // max nodes per row
+const ROW_SIZE = 5;
 
-function NodeChain({ nodes, activeNodeId, flashSet, type }) {
-  // Split into rows
-  const rows = [];
-  for (let i = 0; i < nodes.length; i += ROW_SIZE) {
-    rows.push(nodes.slice(i, i + ROW_SIZE));
-  }
+function NodeChain({
+  nodes,
+  activeNodeId,
+  flashSet,
+  type,
+  isDoubly,
+  layoutMode,
+  showAddresses,
+  addrMap,
+}) {
+  const containerRef = useRef(null);
+  // nodeId -> DOM element (the node card div)
+  const nodeElRefs = useRef(new Map());
+  const [arcData, setArcData] = useState([]);
+
+  const rows = useMemo(() => {
+    if (layoutMode === 'horizontal') return [nodes];
+    const r = [];
+    for (let i = 0; i < nodes.length; i += ROW_SIZE) {
+      r.push(nodes.slice(i, i + ROW_SIZE));
+    }
+    return r;
+  }, [nodes, layoutMode]);
+
+  /* FIX-3: Build node-index map for cycle detection */
+  const indexMap = useMemo(() => {
+    const m = new Map();
+    nodes.forEach((n, i) => m.set(n.id, i));
+    return m;
+  }, [nodes]);
+
+  /* FIX-3: Identify backward/cycle edges */
+  const cycleEdges = useMemo(() => {
+    const edges = [];
+    nodes.forEach((n, i) => {
+      // next pointer going to an earlier or same node = cycle
+      if (n.nextId != null && n.nextId !== -1 && n.nextId !== undefined) {
+        const ti = indexMap.get(n.nextId);
+        if (ti !== undefined && ti <= i) {
+          edges.push({ fromId: n.id, toId: n.nextId, fromIdx: i, toIdx: ti, pointerType: 'next' });
+        }
+      }
+      // For DLL: prev pointer going to a later node = unusual/cycle
+      if (n.prevId != null && n.prevId !== -1 && n.prevId !== undefined) {
+        const ti = indexMap.get(n.prevId);
+        if (ti !== undefined && ti > i) {
+          edges.push({ fromId: n.id, toId: n.prevId, fromIdx: i, toIdx: ti, pointerType: 'prev' });
+        }
+      }
+    });
+    return edges;
+  }, [nodes, indexMap]);
+
+  /* FIX-3: Register node element ref callback */
+  const registerNodeRef = useCallback((nodeId, el) => {
+    if (el) {
+      nodeElRefs.current.set(nodeId, el);
+    } else {
+      nodeElRefs.current.delete(nodeId);
+    }
+  }, []);
+
+  /* FIX-3: Measure DOM positions after render to compute arc coordinates */
+  useEffect(() => {
+    if (cycleEdges.length === 0) {
+      setArcData([]);
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      const containerEl = containerRef.current;
+      if (!containerEl) return;
+      const containerRect = containerEl.getBoundingClientRect();
+      const arcs = [];
+
+      for (const edge of cycleEdges) {
+        const fromEl = nodeElRefs.current.get(edge.fromId);
+        const toEl   = nodeElRefs.current.get(edge.toId);
+        if (!fromEl || !toEl) continue;
+
+        const fRect = fromEl.getBoundingClientRect();
+        const tRect = toEl.getBoundingClientRect();
+
+        // exit from right-center of source, enter left-center of target
+        arcs.push({
+          ...edge,
+          fx: fRect.right  - containerRect.left,
+          fy: fRect.top    - containerRect.top + fRect.height / 2,
+          tx: tRect.left   - containerRect.left,
+          ty: tRect.top    - containerRect.top + tRect.height / 2,
+          arcFloor: Math.max(fRect.bottom, tRect.bottom) - containerRect.top + 72,
+        });
+      }
+      setArcData(arcs);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [cycleEdges, nodes, layoutMode]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 48 }}>
+    <div
+      ref={containerRef}
+      style={{
+        display: 'flex', flexDirection: 'column',
+        gap: isDoubly ? 64 : 52, padding: '10px 0',
+        position: 'relative', // needed for absolute arc overlay
+      }}
+    >
+      {/* FIX-3: Cycle arc SVG overlay */}
+      {arcData.length > 0 && (
+        <CycleArcOverlay arcs={arcData} />
+      )}
+
       {rows.map((row, rowIdx) => {
-        const isLastRow  = rowIdx === rows.length - 1;
-        const isEvenRow  = rowIdx % 2 === 0;
-        // Even rows go left→right, odd rows go right→left (snake layout)
-        const displayRow = isEvenRow ? row : [...row].reverse();
-        const firstGlobal = rowIdx * ROW_SIZE;
+        const isEven    = rowIdx % 2 === 0;
+        const display   = (isEven || layoutMode === 'horizontal') ? row : [...row].reverse();
+        const firstG    = rowIdx * ROW_SIZE;
 
         return (
-          <div key={rowIdx} style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {/* Node row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+          <div key={rowIdx} style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              {display.map((node, colIdx) => {
+                const globalIdx = (isEven || layoutMode === 'horizontal')
+                  ? firstG + colIdx
+                  : firstG + (row.length - 1 - colIdx);
 
-              {displayRow.map((node, colIdx) => {
-                const globalIdx   = isEvenRow
-                  ? firstGlobal + colIdx
-                  : firstGlobal + (row.length - 1 - colIdx);
-                const isActive    = node.id === activeNodeId;
-                const isFlashing  = flashSet.has(node.id);
-                const isHead      = node.isHead;
-                const isLast      = globalIdx === nodes.length - 1;
+                const isActive   = node.id === activeNodeId;
+                const isFlashing = flashSet.has(node.id);
+                const isHead     = Boolean(node.isHead || globalIdx === 0);
+                const isLast     = globalIdx === nodes.length - 1;
+                const hasArrow   = colIdx < display.length - 1;
+                const isRowEnd   = colIdx === display.length - 1;
+                const hasWrap    = !isLast && isRowEnd && layoutMode === 'wrap';
 
-                // Is there a next node in THIS row after this one?
-                const hasArrowRight = colIdx < displayRow.length - 1;
-                // Is there a continuation arrow to next row?
-                const isRowEnd  = colIdx === displayRow.length - 1;
-                const hasMore   = !isLast && isRowEnd;
+                // Is this node the SOURCE of a cycle edge? (suppress the normal arrow at row-end)
+                const isCycleSource = cycleEdges.some(e => e.fromId === node.id && e.pointerType === 'next');
+
+                // Target address for the connector arrow (FIX-2)
+                const nextNode = hasArrow ? display[colIdx + 1] : null;
+                const arrowTargetAddr = nextNode ? (addrMap.get(nextNode.id) || null) : null;
 
                 return (
                   <div key={node.id} style={{ display: 'flex', alignItems: 'center' }}>
-                    {/* HEAD label + node box */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      {/* HEAD badge */}
-                      {isHead && (
-                        <div style={{
-                          marginBottom: 6,
-                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                        }}>
+                    <div style={{
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', position: 'relative',
+                    }}>
+                      {/* Active Cursor Pointer indicator */}
+                      {isActive && (
+                        <div
+                          className="bounce-pointer"
+                          style={{
+                            position: 'absolute',
+                            top: isDoubly ? -38 : -32,
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', zIndex: 10,
+                          }}
+                        >
                           <span style={{
-                            fontSize: 10, fontWeight: 800, color: '#f59e0b',
-                            textTransform: 'uppercase', letterSpacing: '.06em',
                             padding: '2px 8px', borderRadius: 4,
-                            background: 'rgba(245,158,11,.15)',
-                            border: '1px solid rgba(245,158,11,.3)',
-                          }}>HEAD</span>
-                          <span style={{ fontSize: 12, color: '#f59e0b' }}>↓</span>
+                            background: getTypeColor(type), color: '#090d16',
+                            fontSize: 10, fontWeight: 800, letterSpacing: '.06em',
+                            boxShadow: `0 2px 10px ${getTypeColor(type)}88`,
+                          }}>
+                            POINTER
+                          </span>
+                          <span style={{
+                            fontSize: 11, color: getTypeColor(type),
+                            lineHeight: 1, marginTop: -1,
+                          }}>▼</span>
                         </div>
                       )}
 
-                      {/* Node box */}
-                      <NodeBox
-                        node={node}
-                        isActive={isActive}
-                        isFlashing={isFlashing}
-                        type={type}
-                      />
-
-                      {/* NULL terminal */}
-                      {isLast && (
+                      {/* Head Tag above Node */}
+                      {isHead && !isActive && (
                         <div style={{
-                          marginTop: 6, fontSize: 10, fontWeight: 700,
-                          color: '#6b7280', fontFamily: 'monospace',
-                          letterSpacing: '.04em',
-                        }}>↓ null</div>
+                          marginBottom: 6,
+                          display: 'flex', alignItems: 'center', gap: 3,
+                          padding: '2px 8px', borderRadius: 4,
+                          background: 'rgba(245, 158, 11, 0.15)',
+                          border: '1px solid rgba(245, 158, 11, 0.4)',
+                          color: '#f59e0b', fontSize: 9.5, fontWeight: 800,
+                          letterSpacing: '.08em', textTransform: 'uppercase',
+                        }}>
+                          <span>👑</span> HEAD
+                        </div>
+                      )}
+
+                      {/* FIX-3: Ref registration wrapper for cycle arc measurement */}
+                      <div ref={el => registerNodeRef(node.id, el)}>
+                        <NodeCard
+                          node={node}
+                          index={globalIdx}
+                          isActive={isActive}
+                          isFlashing={isFlashing}
+                          type={type}
+                          isDoubly={isDoubly}
+                          showAddresses={showAddresses}
+                          addrMap={addrMap}
+                        />
+                      </div>
+
+                      {/* Cycle badge on source node (instead of NULL) */}
+                      {isLast && isCycleSource ? (
+                        <div style={{
+                          marginTop: 8, display: 'flex', alignItems: 'center', gap: 4,
+                          padding: '2px 8px', borderRadius: 4,
+                          background: 'rgba(249, 115, 22, 0.12)',
+                          border: '1px dashed rgba(249, 115, 22, 0.5)',
+                          color: '#fb923c', fontSize: 10, fontWeight: 700,
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}>
+                          <span>↩</span> CYCLE
+                        </div>
+                      ) : isLast && (
+                        <div style={{
+                          marginTop: 8, display: 'flex', alignItems: 'center', gap: 4,
+                          padding: '2px 8px', borderRadius: 4,
+                          background: 'rgba(239, 68, 68, 0.08)',
+                          border: '1px dashed rgba(239, 68, 68, 0.3)',
+                          color: '#f87171', fontSize: 10, fontWeight: 700,
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}>
+                          <span>⏚</span> NULL
+                        </div>
                       )}
                     </div>
 
-                    {/* Horizontal arrow to next node */}
-                    {hasArrowRight && (
-                      <HArrow color={isActive ? getTypeColor(type) : 'rgba(255,255,255,.2)'} />
+                    {/* Arrow between consecutive nodes in same row */}
+                    {hasArrow && (
+                      isDoubly
+                        ? <DoublyHArrow
+                            isActive={isActive}
+                            type={type}
+                            isReversed={!isEven && layoutMode === 'wrap'}
+                            targetAddr={showAddresses ? arrowTargetAddr : null}
+                            prevAddr={showAddresses ? (addrMap.get(node.id) || null) : null}
+                          />
+                        : <SinglyHArrow
+                            isActive={isActive}
+                            type={type}
+                            isReversed={!isEven && layoutMode === 'wrap'}
+                            targetAddr={showAddresses ? arrowTargetAddr : null}
+                          />
                     )}
 
-                    {/* Row-continuation arrow (down or up) */}
-                    {hasMore && !isLast && (
-                      <CornerArrow direction={isEvenRow ? 'down-right' : 'down-left'} />
+                    {/* Corner Curve for wrapped snake row */}
+                    {hasWrap && (
+                      <SnakeRowTurn fromRight={isEven} color={isActive ? getTypeColor(type) : 'rgba(255,255,255,0.2)'} />
                     )}
                   </div>
                 );
               })}
             </div>
-
-            {/* Row connector arrow (between rows) */}
-            {!isLastRow && (
-              <RowConnector
-                fromRight={isEvenRow}
-                nodeCount={row.length}
-              />
-            )}
           </div>
         );
       })}
@@ -280,206 +715,502 @@ function NodeChain({ nodes, activeNodeId, flashSet, type }) {
 }
 
 /* ══════════════════════════════════════════════════════
-   NodeBox — single node rendered as data|next box
+   FIX-3: Cycle Arc Overlay — Bezier arcs below nodes
    ══════════════════════════════════════════════════════ */
-function NodeBox({ node, isActive, isFlashing, type }) {
+function CycleArcOverlay({ arcs }) {
+  if (!arcs.length) return null;
+
+  // SVG needs to be tall enough to contain all arcs going below
+  const maxBottom = Math.max(...arcs.map(a => a.arcFloor)) + 30;
+
+  return (
+    <svg
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: maxBottom,
+        overflow: 'visible',
+        pointerEvents: 'none',
+        zIndex: 4,
+      }}
+      aria-hidden="true"
+    >
+      {arcs.map((arc, i) => {
+        const { fx, fy, tx, ty, arcFloor, pointerType } = arc;
+        // Cubic bezier: both control points dive to arcFloor
+        const path = `M ${fx} ${fy} C ${fx} ${arcFloor}, ${tx} ${arcFloor}, ${tx} ${ty}`;
+        const midX = (fx + tx) / 2;
+        const labelY = arcFloor + 14;
+        const color = pointerType === 'prev' ? '#818cf8' : '#f97316';
+        const label = pointerType === 'prev' ? '← PREV CYCLE' : '↩ NEXT CYCLE';
+
+        return (
+          <g key={i}>
+            {/* Glow shadow */}
+            <path
+              d={path}
+              fill="none"
+              stroke={color}
+              strokeWidth="5"
+              opacity="0.15"
+            />
+            {/* Main arc line */}
+            <path
+              d={path}
+              fill="none"
+              stroke={color}
+              strokeWidth="2"
+              strokeDasharray="6 3"
+              markerEnd="url(#ll-cycle)"
+              className="cycle-arc-flowing"
+              opacity="0.9"
+            />
+            {/* Cycle label badge */}
+            <rect
+              x={midX - 38}
+              y={labelY - 9}
+              width={76}
+              height={16}
+              rx={4}
+              fill="rgba(249,115,22,0.12)"
+              stroke={color}
+              strokeWidth="0.8"
+              opacity="0.9"
+            />
+            <text
+              x={midX}
+              y={labelY + 3}
+              textAnchor="middle"
+              fill={color}
+              fontSize="8.5"
+              fontWeight="700"
+              fontFamily="'JetBrains Mono', monospace"
+              letterSpacing="0.04em"
+            >
+              {label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   NodeCard — FIX-2: Clear Address Display
+   ══════════════════════════════════════════════════════ */
+function NodeCard({
+  node,
+  index,
+  isActive,
+  isFlashing,
+  type,
+  isDoubly,
+  showAddresses,
+  addrMap,
+}) {
+  const nodeAddr = addrMap.get(node.id) || '0x???';
+  const nextAddr = node.nextId != null && node.nextId !== -1 ? addrMap.get(node.nextId) : null;
+  const prevAddr = node.prevId != null && node.prevId !== -1 ? addrMap.get(node.prevId) : null;
+
   const colors = getNodeColors(isActive, type);
 
   return (
-    <div style={{
-      display: 'flex',
-      border: `2px solid ${colors.border}`,
-      borderRadius: 8,
-      overflow: 'hidden',
-      boxShadow: isActive
-        ? `0 0 0 3px ${colors.glow}, 0 4px 20px ${colors.shadow}`
-        : isFlashing
-        ? `0 0 0 2px rgba(255,255,255,.15)`
-        : 'none',
-      transform: isFlashing ? 'translateY(-3px) scale(1.04)' : 'none',
-      transition: 'transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease',
-      minWidth: 100,
-    }}>
-      {/* Data compartment */}
+    <div
+      className={isActive ? 'pulse-active' : ''}
+      style={{
+        display: 'flex', flexDirection: 'column',
+        borderRadius: 12,
+        background: 'linear-gradient(160deg, #131b2e 0%, #0d121f 100%)',
+        border: `2px solid ${colors.border}`,
+        boxShadow: isActive
+          ? `0 0 0 4px ${colors.glow}, 0 8px 32px ${colors.shadow}`
+          : isFlashing
+            ? '0 0 0 3px rgba(255,255,255,0.25), 0 4px 20px rgba(255,255,255,0.1)'
+            : '0 4px 16px rgba(0,0,0,0.4)',
+        transform: isFlashing
+          ? 'translateY(-6px) scale(1.06)'
+          : isActive
+            ? 'translateY(-2px)'
+            : 'none',
+        transition: 'all 240ms cubic-bezier(.34,1.56,.64,1)',
+        minWidth: isDoubly ? 168 : 132,
+        overflow: 'hidden',
+      }}
+    >
+      {/* FIX-2: Node header — Addr (left, prominent) + Index badge (right) */}
       <div style={{
-        padding: '10px 14px',
-        background: colors.dataBg,
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        gap: 3, minWidth: 60,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '4px 8px',
+        background: isActive ? colors.headerBg : 'rgba(255, 255, 255, 0.04)',
+        borderBottom: `1px solid ${colors.border}`,
+        fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em',
+        fontFamily: "'JetBrains Mono', monospace",
       }}>
+        {/* FIX-2: Own address — clearly labeled "Addr:" */}
+        {showAddresses ? (
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 3,
+            color: isActive ? '#f8fafc' : '#94a3b8',
+          }}>
+            <span style={{ color: isActive ? colors.label : '#475569', fontSize: 8.5 }}>Addr</span>
+            <span style={{
+              background: isActive ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.3)',
+              padding: '1px 5px', borderRadius: 3,
+              color: isActive ? '#f8fafc' : '#64748b',
+            }}>
+              {nodeAddr}
+            </span>
+          </span>
+        ) : (
+          <span style={{ color: colors.label }}>node</span>
+        )}
+        {/* Index badge */}
         <span style={{
-          fontSize: 10, fontWeight: 700, color: colors.label,
-          textTransform: 'uppercase', letterSpacing: '.05em',
-        }}>data</span>
-        <span style={{
-          fontSize: 18, fontWeight: 800, color: colors.val,
-          fontFamily: "'JetBrains Mono', monospace",
-          lineHeight: 1,
-        }}>{String(node.val)}</span>
+          background: isActive ? `${colors.label}22` : 'rgba(255,255,255,0.06)',
+          border: `1px solid ${isActive ? colors.label + '44' : 'rgba(255,255,255,0.1)'}`,
+          color: isActive ? colors.label : '#475569',
+          padding: '0px 5px', borderRadius: 3, fontSize: 9,
+        }}>
+          [{index}]
+        </span>
       </div>
 
-      {/* Divider */}
-      <div style={{ width: 1, background: colors.border, flexShrink: 0 }} />
+      {/* Compartments Row */}
+      <div style={{ display: 'flex', alignItems: 'stretch' }}>
+        {/* PREV Compartment (Doubly only) */}
+        {isDoubly && (
+          <>
+            <div style={{
+              padding: '10px 8px', minWidth: 46,
+              background: isActive ? 'rgba(139, 92, 246, 0.15)' : 'rgba(139, 92, 246, 0.04)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+            }}>
+              <span style={{ fontSize: 8.5, fontWeight: 700, color: '#c4b5fd', letterSpacing: '.06em' }}>
+                PREV
+              </span>
+              {/* FIX-2: ← prefix to indicate direction */}
+              <span style={{
+                fontSize: 9.5, fontWeight: 700,
+                color: prevAddr ? '#a78bfa' : '#475569',
+                fontFamily: "'JetBrains Mono', monospace",
+                textAlign: 'center',
+              }}>
+                {prevAddr ? (
+                  <><span style={{ opacity: 0.6 }}>←</span>{prevAddr}</>
+                ) : (
+                  <span style={{ color: '#475569' }}>null</span>
+                )}
+              </span>
+            </div>
+            <div style={{ width: 1, background: colors.border, opacity: 0.5 }} />
+          </>
+        )}
 
-      {/* Next pointer compartment */}
-      <div style={{
-        padding: '10px 10px',
-        background: colors.nextBg,
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        gap: 3, minWidth: 40,
-      }}>
-        <span style={{
-          fontSize: 10, fontWeight: 700, color: colors.label,
-          textTransform: 'uppercase', letterSpacing: '.05em',
-        }}>next</span>
-        <span style={{
-          fontSize: 13, color: node.nextId !== -1 ? colors.ptr : '#4b5563',
-          fontFamily: 'monospace', fontWeight: 700,
+        {/* DATA Compartment */}
+        <div style={{
+          padding: '10px 14px', flex: 1, minWidth: 58,
+          background: colors.dataBg,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
         }}>
-          {node.nextId !== -1 ? '→' : 'null'}
-        </span>
+          <span style={{ fontSize: 9, fontWeight: 700, color: colors.label, letterSpacing: '.06em' }}>
+            DATA
+          </span>
+          <span style={{
+            fontSize: 19, fontWeight: 800, color: colors.val,
+            fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.1,
+          }}>
+            {String(node.val)}
+          </span>
+        </div>
+
+        <div style={{ width: 1, background: colors.border, opacity: 0.5 }} />
+
+        {/* NEXT Compartment */}
+        <div style={{
+          padding: '10px 8px', minWidth: 50,
+          background: colors.nextBg,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 700, color: colors.label, letterSpacing: '.06em' }}>
+            NEXT
+          </span>
+          {/* FIX-2: → prefix to indicate direction */}
+          <span style={{
+            fontSize: 9.5, fontWeight: 700,
+            color: nextAddr ? colors.ptr : '#ef4444',
+            fontFamily: "'JetBrains Mono', monospace",
+            textAlign: 'center',
+          }}>
+            {nextAddr ? (
+              <><span style={{ opacity: 0.6 }}>→</span>{nextAddr}</>
+            ) : (
+              <span style={{ color: '#ef4444' }}>null</span>
+            )}
+          </span>
+        </div>
       </div>
     </div>
   );
 }
 
-/* ── Arrow components ── */
-function HArrow({ color }) {
+/* ══════════════════════════════════════════════════════
+   FIX-1 + FIX-2: Connector Arrows — stable IDs, address labels
+   ══════════════════════════════════════════════════════ */
+
+// Singly forward/reverse arrow with optional address annotation
+function SinglyHArrow({ isActive, type, isReversed = false, targetAddr = null }) {
+  const markerId    = getFwdMarkerId(isActive, type);
+  const strokeColor = isActive ? getTypeColor(type) : 'rgba(148, 163, 184, 0.4)';
+  const svgH = targetAddr ? 36 : 24;
+
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center',
-      padding: '0 4px', flexShrink: 0,
-    }}>
-      <svg width="32" height="20" viewBox="0 0 32 20">
-        <line x1="0" y1="10" x2="26" y2="10"
-          stroke={color} strokeWidth="2" strokeDasharray="none" />
-        <polygon points="26,6 32,10 26,14" fill={color} />
+    <div style={{ display: 'flex', alignItems: 'center', padding: '0 6px', flexShrink: 0 }}>
+      <svg width="44" height={svgH} viewBox={`0 0 44 ${svgH}`}>
+        {/* FIX-2: Target address label above arrow */}
+        {targetAddr && (
+          <text
+            x="22" y="10"
+            textAnchor="middle"
+            fontSize="7.5"
+            fontWeight="600"
+            fill={isActive ? strokeColor : '#475569'}
+            fontFamily="'JetBrains Mono', monospace"
+          >
+            {targetAddr}
+          </text>
+        )}
+        {/* Arrow line — no inline <defs>, uses shared markers */}
+        {isReversed ? (
+          <line
+            x1="40" y1={targetAddr ? 24 : 12}
+            x2="6"  y2={targetAddr ? 24 : 12}
+            stroke={strokeColor}
+            strokeWidth="2.5"
+            className={isActive ? 'arrow-flowing' : ''}
+            markerEnd={markerId}
+          />
+        ) : (
+          <line
+            x1="4"  y1={targetAddr ? 24 : 12}
+            x2="38" y2={targetAddr ? 24 : 12}
+            stroke={strokeColor}
+            strokeWidth="2.5"
+            className={isActive ? 'arrow-flowing' : ''}
+            markerEnd={markerId}
+          />
+        )}
       </svg>
     </div>
   );
 }
 
-function CornerArrow({ direction }) {
+// Doubly bidirectional arrows with stable IDs + optional address label
+function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, prevAddr = null }) {
+  const nextMarkerId = isActive ? 'url(#ll-next-h-active)' : 'url(#ll-next-h)';
+  const prevMarkerId = isActive ? 'url(#ll-prev-h-active)' : 'url(#ll-prev-h)';
+  const nextColor    = isActive ? getTypeColor(type) : '#38bdf8';
+  const prevColor    = isActive ? '#c4b5fd' : '#818cf8';
+  const hasLabel     = targetAddr || prevAddr;
+  const svgW         = 46;
+
   return (
     <div style={{
-      width: 28, height: 28,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      color: 'rgba(255,255,255,.2)', fontSize: 18,
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      padding: '0 6px', flexShrink: 0, gap: 2,
     }}>
-      {direction === 'down-right' ? '↘' : '↙'}
+      {/* FIX-2: Prev address label */}
+      {hasLabel && (
+        <span style={{
+          fontSize: 7, fontWeight: 600,
+          color: '#475569',
+          fontFamily: "'JetBrains Mono', monospace",
+          textAlign: 'center',
+        }}>
+          {prevAddr || '—'}
+        </span>
+      )}
+
+      {/* Prev Arrow (Violet) — right to left */}
+      <svg width={svgW} height="12" viewBox={`0 0 ${svgW} 12`}>
+        <line
+          x1="40" y1="6" x2="6" y2="6"
+          stroke={prevColor} strokeWidth="2"
+          className={isActive ? 'arrow-flowing' : ''}
+          markerEnd={prevMarkerId}
+        />
+      </svg>
+
+      {/* Next Arrow (Cyan) — left to right */}
+      <svg width={svgW} height="12" viewBox={`0 0 ${svgW} 12`}>
+        <line
+          x1="6" y1="6" x2="40" y2="6"
+          stroke={nextColor} strokeWidth="2"
+          className={isActive ? 'arrow-flowing' : ''}
+          markerEnd={nextMarkerId}
+        />
+      </svg>
+
+      {/* FIX-2: Next address label */}
+      {hasLabel && (
+        <span style={{
+          fontSize: 7, fontWeight: 600,
+          color: isActive ? nextColor : '#475569',
+          fontFamily: "'JetBrains Mono', monospace",
+          textAlign: 'center',
+        }}>
+          {targetAddr || '—'}
+        </span>
+      )}
     </div>
   );
 }
 
-function RowConnector({ fromRight, nodeCount }) {
-  const W = nodeCount * 142; // approximate total width
+// Smooth curved loop for snake rows (unchanged)
+function SnakeRowTurn({ fromRight, color }) {
   return (
     <div style={{
-      height: 28,
-      display: 'flex', alignItems: 'center',
-      justifyContent: fromRight ? 'flex-end' : 'flex-start',
-      paddingRight: fromRight ? 16 : 0,
-      paddingLeft: fromRight ? 0 : 16,
+      padding: '0 8px', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
     }}>
-      <span style={{ fontSize: 18, color: 'rgba(255,255,255,.2)' }}>
-        {fromRight ? '↙' : '↘'}
-      </span>
+      <svg width="34" height="42" viewBox="0 0 34 42" fill="none">
+        <path
+          d={fromRight ? "M 2 8 C 30 8, 30 34, 2 34" : "M 32 8 C 4 8, 4 34, 32 34"}
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeDasharray="4 2"
+        />
+      </svg>
     </div>
   );
 }
 
-/* ── Empty state ── */
-function EmptyHint() {
+/* ══════════════════════════════════════════════════════
+   Status Badges & Operation Helpers
+   ══════════════════════════════════════════════════════ */
+function OperationBadge({ type }) {
+  const conf = {
+    ll_insert:   { label: 'INSERT',    color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: 'rgba(52, 211, 153, 0.3)' },
+    ll_traverse: { label: 'TRAVERSE',  color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)', border: 'rgba(56, 189, 248, 0.3)' },
+    ll_delete:   { label: 'DELETE',    color: '#f87171', bg: 'rgba(248, 113, 113, 0.15)', border: 'rgba(248, 113, 113, 0.3)' },
+    ll_update:   { label: 'LINK / SET',color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.3)' },
+    ll_init:     { label: 'INIT',      color: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)', border: 'rgba(192, 132, 252, 0.3)' },
+  }[type] || { label: 'SNAPSHOT', color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.15)', border: 'rgba(148, 163, 184, 0.3)' };
+
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', padding: '60px 32px', gap: 16,
-      color: '#8b949e', textAlign: 'center', width: '100%',
+      display: 'flex', alignItems: 'center', gap: 5,
+      padding: '3px 8px', borderRadius: 6,
+      background: conf.bg, border: `1px solid ${conf.border}`,
+      fontSize: 10, fontWeight: 800, color: conf.color,
+      letterSpacing: '.06em',
     }}>
-      <div style={{
-        fontSize: 40, width: 72, height: 72, borderRadius: 16,
-        background: 'rgba(255,255,255,.04)',
-        border: '1.5px solid rgba(255,255,255,.08)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>⛓</div>
-      <div>
-        <p style={{ fontSize: 15, fontWeight: 600, color: '#e6edf3', margin: '0 0 6px' }}>
-          Linked List Visualizer
-        </p>
-        <p style={{ fontSize: 13, color: '#8b949e', margin: 0, lineHeight: 1.6, maxWidth: 320 }}>
-          Write your code with a custom Node class (any field named{' '}
-          <code style={{ color: '#7ee787', background: 'rgba(255,255,255,.06)',
-            padding: '1px 5px', borderRadius: 3 }}>data</code> or{' '}
-          <code style={{ color: '#7ee787', background: 'rgba(255,255,255,.06)',
-            padding: '1px 5px', borderRadius: 3 }}>val</code> and{' '}
-          <code style={{ color: '#7ee787', background: 'rgba(255,255,255,.06)',
-            padding: '1px 5px', borderRadius: 3 }}>next</code>), then hit{' '}
-          <span style={{
-            color: '#86efac', background: 'rgba(76,175,80,.15)',
-            padding: '1px 8px', borderRadius: 3, fontFamily: 'monospace',
-            fontWeight: 700,
-          }}>▶ Run</span>.
-        </p>
-      </div>
-      {/* Hint snippets */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
-        {['class Node { int data; Node next; }',
-          'head.next = new Node(20)',
-          'cur = cur.next'].map(h => (
-          <span key={h} style={{
-            padding: '5px 10px', borderRadius: 6,
-            background: 'rgba(255,255,255,.04)',
-            border: '1px solid rgba(255,255,255,.08)',
-            fontSize: 11, color: '#8b949e',
-            fontFamily: "'JetBrains Mono', monospace",
-          }}>{h}</span>
-        ))}
-      </div>
+      <span style={{
+        width: 6, height: 6, borderRadius: '50%',
+        background: conf.color, boxShadow: `0 0 6px ${conf.color}`,
+      }} />
+      {conf.label}
     </div>
   );
 }
 
-/* ── Color / icon helpers ── */
 function getTypeColor(type) {
   switch (type) {
-    case 'll_insert':   return '#4CAF50';
-    case 'll_delete':   return '#E15759';
-    case 'll_traverse': return '#2E74B5';
-    case 'll_init':     return '#8b5cf6';
-    default:            return '#F2A93B';
+    case 'll_insert':   return '#34d399';
+    case 'll_delete':   return '#f87171';
+    case 'll_traverse': return '#38bdf8';
+    case 'll_init':     return '#c084fc';
+    default:            return '#fbbf24';
   }
 }
 
 function getTypeIcon(type) {
   switch (type) {
     case 'll_insert':   return '＋';
-    case 'll_delete':   return '−';
-    case 'll_traverse': return '→';
+    case 'll_delete':   return '✕';
+    case 'll_traverse': return '➜';
     case 'll_init':     return '◈';
-    default:            return '↺';
+    default:            return '⟳';
   }
 }
 
 function getNodeColors(isActive, type) {
   if (isActive) {
     const c = getTypeColor(type);
-    const map = {
-      '#4CAF50': { dataBg: 'rgba(76,175,80,.18)',   nextBg: 'rgba(76,175,80,.1)',   border: '#4CAF50', val: '#86efac', label: '#6ee7b7', ptr: '#86efac', glow: 'rgba(76,175,80,.4)',   shadow: 'rgba(76,175,80,.2)' },
-      '#E15759': { dataBg: 'rgba(225,87,89,.18)',    nextBg: 'rgba(225,87,89,.1)',   border: '#E15759', val: '#fca5a5', label: '#fca5a5', ptr: '#fca5a5', glow: 'rgba(225,87,89,.4)',   shadow: 'rgba(225,87,89,.2)' },
-      '#2E74B5': { dataBg: 'rgba(46,116,181,.22)',   nextBg: 'rgba(46,116,181,.1)',  border: '#2E74B5', val: '#93c5fd', label: '#7dd3fc', ptr: '#93c5fd', glow: 'rgba(46,116,181,.45)', shadow: 'rgba(46,116,181,.2)' },
-      '#8b5cf6': { dataBg: 'rgba(139,92,246,.22)',   nextBg: 'rgba(139,92,246,.1)',  border: '#8b5cf6', val: '#c4b5fd', label: '#c4b5fd', ptr: '#c4b5fd', glow: 'rgba(139,92,246,.4)',  shadow: 'rgba(139,92,246,.2)' },
-      '#F2A93B': { dataBg: 'rgba(242,169,59,.22)',   nextBg: 'rgba(242,169,59,.1)',  border: '#F2A93B', val: '#fcd34d', label: '#fde68a', ptr: '#fcd34d', glow: 'rgba(242,169,59,.4)',  shadow: 'rgba(242,169,59,.2)' },
+    return {
+      border:   c,
+      headerBg: `${c}26`,
+      dataBg:   `${c}18`,
+      nextBg:   `${c}12`,
+      val:      '#ffffff',
+      label:    c,
+      ptr:      c,
+      glow:     `${c}66`,
+      shadow:   `${c}33`,
     };
-    return map[c] || map['#F2A93B'];
   }
   return {
-    dataBg:  'rgba(255,255,255,.04)',
-    nextBg:  'rgba(255,255,255,.02)',
-    border:  'rgba(255,255,255,.14)',
-    val:     '#e6edf3',
-    label:   '#6b7280',
-    ptr:     '#8b949e',
-    glow:    'transparent',
-    shadow:  'transparent',
+    border:   'rgba(255,255,255,0.12)',
+    headerBg: 'rgba(255,255,255,0.03)',
+    dataBg:   'rgba(255,255,255,0.02)',
+    nextBg:   'rgba(255,255,255,0.01)',
+    val:      '#f1f5f9',
+    label:    '#64748b',
+    ptr:      '#94a3b8',
+    glow:     'transparent',
+    shadow:   'transparent',
   };
+}
+
+/* ══════════════════════════════════════════════════════
+   Empty State Visual
+   ══════════════════════════════════════════════════════ */
+function EmptyHint({ isDoubly }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', padding: '60px 32px', gap: 18,
+      color: '#94a3b8', textAlign: 'center', maxWidth: 460, margin: '40px auto 0',
+      background: 'rgba(15, 23, 42, 0.4)',
+      backdropFilter: 'blur(12px)',
+      borderRadius: 16,
+      border: '1px solid rgba(255, 255, 255, 0.07)',
+    }}>
+      <div style={{
+        fontSize: 36, width: 76, height: 76, borderRadius: 20,
+        background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(139, 92, 246, 0.15))',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+      }}>
+        {isDoubly ? '⇄' : '⛓'}
+      </div>
+      <div>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', margin: '0 0 6px' }}>
+          {isDoubly ? 'Doubly Linked List Visualizer' : 'Linked List Visualizer'}
+        </h3>
+        <p style={{ fontSize: 13, color: '#94a3b8', margin: 0, lineHeight: 1.6 }}>
+          Run your code with a <code style={{ color: '#38bdf8', background: 'rgba(56, 189, 248, 0.1)', padding: '2px 6px', borderRadius: 4 }}>Node</code> class to see the live pointer chain animate step-by-step.
+        </p>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {['head = Node(10)', 'head.next = Node(20)', 'cur = head.next'].map(snippet => (
+          <span key={snippet} style={{
+            padding: '4px 10px', borderRadius: 6,
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            fontSize: 11, color: '#cbd5e1',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}>
+            {snippet}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }

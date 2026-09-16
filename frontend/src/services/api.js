@@ -18,6 +18,10 @@ export const registerUser = (data) => api.post('/auth/register', data);
 export const loginUser = (data) => api.post('/auth/login', data);
 export const getMe = () => api.get('/auth/me');
 
+// -------- Signup OTP --------
+export const signupSendOtp   = (email)                          => api.post('/auth/signup/send-otp',   { email });
+export const signupVerifyOtp = (fullName, email, password, otp) => api.post('/auth/signup/verify-otp', { fullName, email, password, otp });
+
 // -------- Forgot Password --------
 export const forgotSendOtp    = (email)                    => api.post('/auth/forgot-password/send-otp',   { email });
 export const forgotVerifyOtp  = (email, otp)               => api.post('/auth/forgot-password/verify-otp', { email, otp });

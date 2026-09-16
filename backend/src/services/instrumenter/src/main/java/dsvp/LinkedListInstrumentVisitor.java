@@ -378,7 +378,22 @@ public class LinkedListInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "    if (!_dsvpNodeIds.containsKey(n)) _dsvpNodeIds.put(n, _dsvpNodeIdCtr++);\n" +
             "    return _dsvpNodeIds.get(n);\n" +
             "}\n" +
+            "private static boolean _dsvpHasField(Object obj, String... names) {\n" +
+            "    if (obj == null) return false;\n" +
+            "    Class<?> c = obj.getClass();\n" +
+            "    while (c != null && c != Object.class) {\n" +
+            "        for (String name : names) {\n" +
+            "            try {\n" +
+            "                c.getDeclaredField(name);\n" +
+            "                return true;\n" +
+            "            } catch (Exception ignored) {}\n" +
+            "        }\n" +
+            "        c = c.getSuperclass();\n" +
+            "    }\n" +
+            "    return false;\n" +
+            "}\n" +
             "private static Object _dsvpGetField(Object obj, String... names) {\n" +
+            "    if (obj == null) return null;\n" +
             "    Class<?> c = obj.getClass();\n" +
             "    while (c != null && c != Object.class) {\n" +
             "        for (String name : names) {\n" +
@@ -397,6 +412,7 @@ public class LinkedListInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "}\n" +
             "private static void _dsvpTraceLL(Object head, Object active, String desc) {\n" +
             "    if (head == null) return;\n" +
+            "    boolean isDoubly = _dsvpHasField(head, \"prev\",\"previous\",\"back\",\"left\",\"prv\");\n" +
             "    StringBuilder sb = new StringBuilder(\"[\");\n" +
             "    Object cur = head;\n" +
             "    java.util.Set<Object> seen = java.util.Collections.newSetFromMap(\n" +
@@ -413,15 +429,20 @@ public class LinkedListInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "        first = false;\n" +
             "        sb.append(\"{\\\"id\\\":\").append(id)\n" +
             "          .append(\",\\\"val\\\":\\\"\").append(_dsvpEsc(val==null?\"null\":String.valueOf(val))).append(\"\\\"\")\n" +
-            "          .append(\",\\\"nextId\\\":\").append(nxId)\n" +
-            "          .append(\",\\\"isHead\\\":\").append(isHead).append(\"}\");\n" +
+            "          .append(\",\\\"nextId\\\":\").append(nxId);\n" +
+            "        if (isDoubly) {\n" +
+            "            Object prev = _dsvpGetField(cur, \"prev\",\"previous\",\"back\",\"left\",\"prv\");\n" +
+            "            int pvId = (prev != null) ? _dsvpGetId(prev) : -1;\n" +
+            "            sb.append(\",\\\"prevId\\\":\").append(pvId);\n" +
+            "        }\n" +
+            "        sb.append(\",\\\"isHead\\\":\").append(isHead).append(\"}\");\n" +
             "        isHead = false;\n" +
             "        cur = next;\n" +
             "    }\n" +
             "    sb.append(\"]\");\n" +
             "    int activeId = (active != null) ? _dsvpGetId(active) : -1;\n" +
             "    System.err.println(\"DSVP_TRACE:{\\\"op\\\":\\\"ll_snap\\\",\\\"activeId\\\":\"+activeId+\n" +
-            "        \",\\\"nodes\\\":\"+sb+\",\\\"desc\\\":\\\"\"+_dsvpEsc(desc)+\"\\\"}\");\n" +
+            "        \",\\\"isDoubly\\\":\"+isDoubly+\",\\\"nodes\\\":\"+sb+\",\\\"desc\\\":\\\"\"+_dsvpEsc(desc)+\"\\\"}\");\n" +
             "    System.err.flush();\n" +
             "}";
 

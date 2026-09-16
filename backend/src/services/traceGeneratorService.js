@@ -6,7 +6,60 @@ const LL_OPS    = new Set(['ll_snap','ll_init','ll_update','ll_insert','ll_delet
 
 function buildTraceEvents({ language, rawTrace, moduleSlug, userOutput }) {
   if (!rawTrace || !Array.isArray(rawTrace.steps)) return [];
-  return normalizeAll(rawTrace.steps, userOutput || '');
+  const events = normalizeAll(rawTrace.steps, userOutput || '');
+  if (moduleSlug === 'linked-list') {
+    return compactLLEvents(events);
+  }
+  return events;
+}
+
+function compactLLEvents(events) {
+  const hasLL = events.some(e => LL_OPS.has(e.type));
+  if (!hasLL) return events;
+
+  const compacted = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    // Skip constructor call/return frames
+    if ((e.type === 'call' || e.type === 'return') && 
+        (e.func === 'Node' || e.func === 'ListNode' || e.func === '__init__' || 
+         e.description?.includes('Called Node') || e.description?.includes('Node returned'))) {
+      continue;
+    }
+    if (e.type === 'line' && compacted.length <= 1) {
+      continue;
+    }
+
+    // Skip bare 'line' events when LL events are present
+    if (e.type === 'line') {
+      const next = events[i + 1];
+      // If immediately followed by an LL event, the LL event already has the currentLine & locals
+      if (next && LL_OPS.has(next.type)) {
+        continue;
+      }
+      // If preceded by an LL event or call, skip empty intermediate loop check lines
+      const prev = compacted[compacted.length - 1];
+      if (prev && (LL_OPS.has(prev.type) || prev.type === 'call')) {
+        continue;
+      }
+    }
+
+    // Filter duplicate consecutive LL events that don't alter state or active node
+    if (LL_OPS.has(e.type)) {
+      const prev = compacted[compacted.length - 1];
+      if (prev && LL_OPS.has(prev.type)) {
+        const sameActive = prev.activeNodeId === e.activeNodeId;
+        const sameNodes = JSON.stringify(prev.linkedListState) === JSON.stringify(e.linkedListState);
+        if (sameActive && sameNodes) {
+          compacted[compacted.length - 1] = e;
+          continue;
+        }
+      }
+    }
+    compacted.push(e);
+  }
+
+  return compacted.map((e, idx) => ({ ...e, step: idx + 1 }));
 }
 
 /* ── Main normalizer ───────────────────────────────────────────────────── */
@@ -101,14 +154,21 @@ function buildArrayEvt(s, stepNo, op, ctx, userOutput) {
 
 /* ── Linked-List event builder ────────────────────────────────────────── */
 function buildLLEvt(s, stepNo, op, ctx, userOutput) {
-  // nodes: [{id, val, nextId, isHead}, ...]
+  // nodes: [{id, val, nextId, prevId?, isHead, isTail?}, ...]
+  // prevId is present for doubly linked lists — pass it through as-is
   const nodes    = Array.isArray(s.nodes) ? s.nodes : [...(ctx.lastLLSnap || [])];
   const activeId = (s.activeId !== undefined && s.activeId !== null) ? s.activeId : -1;
   const desc     = s.desc || opToLLDesc(op, nodes, activeId);
 
+  // Detect if doubly (explicit isDoubly flag, or any node has prevId defined that is not -1 and not null)
+  const isDoubly = typeof s.isDoubly === 'boolean'
+    ? s.isDoubly
+    : nodes.some(n => n.prevId !== undefined && n.prevId !== null && n.prevId !== -1);
+
   return base(stepNo, op, 'linkedList', desc, ctx, userOutput, {
     linkedListState: nodes,
     activeNodeId:    activeId,
+    isDoubly,
   });
 }
 

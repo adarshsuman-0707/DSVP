@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const UserModel = require('../models/userModel');
 const { sql, getPool } = require('../config/db');
-const { sendOtpEmail } = require('../services/emailService');
+const { sendOtpEmail, sendSignupOtpEmail } = require('../services/emailService');
 
 /* ── helpers ── */
 function generateToken(user) {
@@ -259,4 +259,117 @@ async function resetPassword(req, res, next) {
   }
 }
 
-module.exports = { register, login, me, sendOtp, verifyOtp, resetPassword };
+/* ═══════════════════════════════════════════════════════════
+   SIGNUP OTP — STEP 1: Send OTP
+   POST /api/auth/signup/send-otp
+   body: { email }
+   ═══════════════════════════════════════════════════════════ */
+async function sendSignupOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check email not already registered
+    const existing = await UserModel.findByEmail(normalizedEmail);
+    if (existing) {
+      return res.status(409).json({ message: 'This email is already registered. Please log in.' });
+    }
+
+    const pool = await getPool();
+
+    // Invalidate any previous unused signup OTPs for this email
+    await pool.request()
+      .input('Email', sql.NVarChar(255), normalizedEmail)
+      .query(`UPDATE dbo.PasswordResetOtp SET Used = 1
+              WHERE Email = @Email AND Used = 0 AND OtpCode LIKE 'S%'`);
+
+    // Generate 6-digit OTP  (prefix 'S' in storage to distinguish from password-reset OTPs)
+    const otpDigits  = Math.floor(100000 + Math.random() * 900000).toString();
+    const storedCode = 'S' + otpDigits;           // stored with prefix
+    const expiresMin = parseInt(process.env.OTP_EXPIRES_MIN || '10');
+    const expiresAt  = new Date(Date.now() + expiresMin * 60 * 1000);
+
+    await pool.request()
+      .input('Email',     sql.NVarChar(255), normalizedEmail)
+      .input('OtpCode',   sql.VarChar(10),    storedCode)
+      .input('ExpiresAt', sql.DateTime2,     expiresAt)
+      .query(`INSERT INTO dbo.PasswordResetOtp (Email, OtpCode, ExpiresAt)
+              VALUES (@Email, @OtpCode, @ExpiresAt)`);
+
+    await sendSignupOtpEmail(normalizedEmail, otpDigits, expiresMin);
+
+    res.json({ message: 'OTP sent to your email.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIGNUP OTP — STEP 2: Verify OTP + Create Account
+   POST /api/auth/signup/verify-otp
+   body: { fullName, email, password, otp }
+   ═══════════════════════════════════════════════════════════ */
+async function verifySignupOtp(req, res, next) {
+  try {
+    const { fullName, email, password, otp } = req.body;
+
+    if (!fullName || !email || !password || !otp) {
+      return res.status(400).json({ message: 'fullName, email, password and otp are required' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const storedCode      = 'S' + otp.trim();   // re-attach prefix
+
+    const pool = await getPool();
+
+    // Verify OTP
+    const result = await pool.request()
+      .input('Email',   sql.NVarChar(255), normalizedEmail)
+      .input('OtpCode', sql.VarChar(10),    storedCode)
+      .query(`SELECT TOP 1 OtpId, ExpiresAt, Used
+              FROM dbo.PasswordResetOtp
+              WHERE Email = @Email AND OtpCode = @OtpCode
+              ORDER BY CreatedAt DESC`);
+
+    if (!result.recordset.length) {
+      return res.status(400).json({ message: 'Invalid OTP. Please check and try again.' });
+    }
+
+    const record = result.recordset[0];
+    if (record.Used) {
+      return res.status(400).json({ message: 'This OTP has already been used.' });
+    }
+    if (new Date(record.ExpiresAt) < new Date()) {
+      return res.status(400).json({ message: 'OTP has expired. Please request a new one.' });
+    }
+
+    // Double-check email not registered between otp send and verify
+    const existing = await UserModel.findByEmail(normalizedEmail);
+    if (existing) {
+      return res.status(409).json({ message: 'Email already registered.' });
+    }
+
+    // Create user
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user         = await UserModel.createUser({ fullName: fullName.trim(), email: normalizedEmail, passwordHash });
+    const token        = generateToken(user);
+
+    // Mark OTP used
+    await pool.request()
+      .input('OtpId', sql.Int, record.OtpId)
+      .query(`UPDATE dbo.PasswordResetOtp SET Used = 1 WHERE OtpId = @OtpId`);
+
+    res.status(201).json({ user, token });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { register, login, me, sendOtp, verifyOtp, resetPassword, sendSignupOtp, verifySignupOtp };

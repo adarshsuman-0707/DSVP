@@ -1,19 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * ArrayVisualizer
- * ───────────────
- * Renders the current array state from a trace event as animated cells.
- *
- * Props (all come from the trace event object):
- *   arrayState  : number[]    — full snapshot of the array
- *   activeIndex : number|null — primary highlighted index (write/read/swap)
- *   secondIndex : number|null — second highlighted index (swap)
- *   type        : string      — 'init'|'write'|'read'|'swap'|'append'|'read'
- *   description : string      — human-readable label for this step
- *   step        : number      — current step number
- *   totalSteps  : number      — total steps
- *   userOutput  : string      — aggregated print() / printf() output
+ * ArrayVisualizer — Enhanced
+ * ─────────────────────────
+ * Dual-mode: bar-chart view + cell-box view (toggle)
+ * Smooth CSS animations, glow effects, pointer labels,
+ * dynamic description, resizable stdout panel.
  */
 export default function ArrayVisualizer({
   arrayState   = [],
@@ -25,73 +17,59 @@ export default function ArrayVisualizer({
   totalSteps   = 0,
   userOutput   = '',
 }) {
-  /* track which cells just changed so we can flash them */
-  const [flashSet, setFlashSet] = useState(new Set());
-  const prevStateRef = useRef([]);
+  const [flashSet, setFlashSet]           = useState(new Set());
+  const [viewMode, setViewMode]           = useState('bars'); // 'bars' | 'cells'
+  const [stdoutHeight, setStdoutHeight]   = useState(120);
+  const [isResizingStdout, setResizing]   = useState(false);
+  const prevStateRef                      = useRef([]);
+  const containerRef                      = useRef(null);
 
-  // Resizable stdout height
-  const [stdoutHeight, setStdoutHeight] = useState(120);
-  const [isResizingStdout, setIsResizingStdout] = useState(false);
-  const containerRef = useRef(null);
-
+  /* ── flash detection ── */
   useEffect(() => {
-    if (!isResizingStdout) return;
-
-    const handleMouseMove = (e) => {
-      if (!containerRef.current) return;
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const newHeight = containerRect.bottom - e.clientY;
-      setStdoutHeight(Math.max(60, Math.min(400, newHeight)));
-    };
-
-    const handleMouseUp = () => setIsResizingStdout(false);
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizingStdout]);
-
-  useEffect(() => {
-    const prev = prevStateRef.current;
+    const prev    = prevStateRef.current;
     const changed = new Set();
-    arrayState.forEach((v, i) => {
-      if (prev[i] !== v) changed.add(i);
-    });
+    arrayState.forEach((v, i) => { if (prev[i] !== v) changed.add(i); });
     if (activeIndex !== null) changed.add(activeIndex);
     if (secondIndex !== null) changed.add(secondIndex);
     setFlashSet(changed);
     prevStateRef.current = [...arrayState];
-
-    const t = setTimeout(() => setFlashSet(new Set()), 420);
+    const t = setTimeout(() => setFlashSet(new Set()), 480);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrayState, activeIndex, secondIndex]);
 
-  const isEmpty = arrayState.length === 0;
+  /* ── stdout resize ── */
+  useEffect(() => {
+    if (!isResizingStdout) return;
+    const onMove = e => {
+      if (!containerRef.current) return;
+      const r = containerRef.current.getBoundingClientRect();
+      setStdoutHeight(Math.max(60, Math.min(400, r.bottom - e.clientY)));
+    };
+    const onUp = () => setResizing(false);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, [isResizingStdout]);
+
+  const isEmpty  = arrayState.length === 0;
+  const maxVal   = Math.max(...arrayState.map(Math.abs), 1);
+  const opColor  = OP_COLORS[type] || OP_COLORS.highlight;
 
   return (
     <div
       ref={containerRef}
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        background: '#0d1117',
-        fontFamily: "'Inter', system-ui, sans-serif",
-        overflow: 'hidden',
-        userSelect: isResizingStdout ? 'none' : 'auto',
+        display: 'flex', flexDirection: 'column', height: '100%',
+        background: '#0d1117', fontFamily: "'Inter', system-ui, sans-serif",
+        overflow: 'hidden', userSelect: isResizingStdout ? 'none' : 'auto',
       }}
     >
-
       {/* ── header ── */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 20px', borderBottom: '1px solid rgba(255,255,255,.07)',
-        flexShrink: 0,
+        padding: '10px 20px', borderBottom: '1px solid rgba(255,255,255,.07)',
+        flexShrink: 0, gap: 12,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{
@@ -101,100 +79,92 @@ export default function ArrayVisualizer({
           {arrayState.length > 0 && (
             <span style={{
               padding: '2px 8px', borderRadius: 999,
-              background: 'rgba(46,116,181,.2)', color: '#60a5fa',
+              background: 'rgba(46,116,181,.18)', color: '#60a5fa',
               fontSize: 11, fontWeight: 600,
             }}>size = {arrayState.length}</span>
           )}
+          {totalSteps > 0 && <TypeBadge type={type} />}
         </div>
 
-        {totalSteps > 0 && (
-          <TypeBadge type={type} />
-        )}
+        {/* View toggle */}
+        <div style={{
+          display: 'flex', borderRadius: 8,
+          border: '1px solid rgba(255,255,255,.1)',
+          overflow: 'hidden', flexShrink: 0,
+        }}>
+          {['bars', 'cells'].map(m => (
+            <button key={m} onClick={() => setViewMode(m)} style={{
+              padding: '4px 12px', fontSize: 11, fontWeight: 600,
+              border: 'none', cursor: 'pointer',
+              background: viewMode === m ? 'rgba(46,116,181,.35)' : 'transparent',
+              color: viewMode === m ? '#93c5fd' : '#6b7280',
+              transition: 'background 200ms, color 200ms',
+            }}>
+              {m === 'bars' ? '▦ Bars' : '▤ Cells'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── main canvas ── */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '24px 20px' }}>
-
+      <div style={{ flex: 1, overflow: 'auto', padding: '24px 20px 12px' }}>
         {isEmpty ? (
           <EmptyState />
+        ) : viewMode === 'bars' ? (
+          <BarView
+            arrayState={arrayState}
+            activeIndex={activeIndex}
+            secondIndex={secondIndex}
+            flashSet={flashSet}
+            type={type}
+            maxVal={maxVal}
+          />
         ) : (
-          <>
-            {/* pointer arrow row */}
-            <PointerRow
-              length={arrayState.length}
-              activeIndex={activeIndex}
-              secondIndex={secondIndex}
-              type={type}
-            />
-
-            {/* cell row */}
-            <div style={{
-              display: 'flex', alignItems: 'stretch',
-              gap: 0, flexWrap: 'nowrap',
-              overflowX: 'auto', paddingBottom: 4,
-            }}>
-              {arrayState.map((val, i) => (
-                <ArrayCell
-                  key={i}
-                  index={i}
-                  value={val}
-                  isActive={i === activeIndex}
-                  isSecond={i === secondIndex}
-                  isChanged={flashSet.has(i)}
-                  type={type}
-                  isFirst={i === 0}
-                  isLast={i === arrayState.length - 1}
-                />
-              ))}
-            </div>
-
-            {/* index label row */}
-            <IndexRow length={arrayState.length} activeIndex={activeIndex} secondIndex={secondIndex} />
-          </>
+          <CellView
+            arrayState={arrayState}
+            activeIndex={activeIndex}
+            secondIndex={secondIndex}
+            flashSet={flashSet}
+            type={type}
+          />
         )}
       </div>
 
       {/* ── description bar ── */}
       {description && (
-        <DescriptionBar description={description} step={step} totalSteps={totalSteps} type={type} />
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 20px',
+          background: opColor.descBg,
+          borderTop: `1px solid ${opColor.border}`,
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 16, color: opColor.icon, lineHeight: 1, flexShrink: 0 }}>
+            {OP_ICON[type] || '●'}
+          </span>
+          <span style={{
+            fontSize: 13, color: '#e6edf3', flex: 1,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}>{description}</span>
+          {totalSteps > 0 && (
+            <span style={{ fontSize: 11, color: '#8b949e', flexShrink: 0, fontWeight: 600 }}>
+              {step} / {totalSteps}
+            </span>
+          )}
+        </div>
       )}
 
-      {/* ── user output console ── */}
+      {/* ── stdout ── */}
       {userOutput && (
         <>
-          {/* Horizontal Resize Handle */}
           <div
-            onMouseDown={() => setIsResizingStdout(true)}
+            onMouseDown={() => setResizing(true)}
             style={{
-              height: 4,
-              cursor: 'row-resize',
+              height: 4, cursor: 'row-resize', flexShrink: 0,
               background: isResizingStdout ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
-              transition: isResizingStdout ? 'none' : 'background 150ms ease',
-              position: 'relative',
-              flexShrink: 0,
-              zIndex: 10,
+              transition: isResizingStdout ? 'none' : 'background 150ms',
             }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                left: '50%',
-                top: '50%',
-                transform: 'translate(-50%, -50%)',
-                width: 40,
-                height: 20,
-                background: isResizingStdout ? 'rgba(76,175,80,.3)' : 'transparent',
-                borderRadius: 4,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 12,
-                color: '#8b949e',
-              }}
-            >
-              ⋯
-            </div>
-          </div>
+          />
           <OutputConsole output={userOutput} height={stdoutHeight} />
         </>
       )}
@@ -202,250 +172,293 @@ export default function ArrayVisualizer({
   );
 }
 
-/* ── Cell ─────────────────────────────────────────────────────────────── */
-function ArrayCell({ index, value, isActive, isSecond, isChanged, type, isFirst, isLast }) {
-  const cellColor = getCellColor(isActive, isSecond, type);
-  
-  // Handle null, undefined, and empty values
-  const displayValue = value === null || value === undefined || value === '' 
-    ? <span style={{ opacity: 0.4, fontStyle: 'italic' }}>null</span>
-    : String(value);
+/* ══════════════════════════════════════════════════════
+   BAR VIEW — vertical bar chart, animated heights
+   All rows (pointer, bars, index) in ONE scrollable div
+   ══════════════════════════════════════════════════════ */
+function BarView({ arrayState, activeIndex, secondIndex, flashSet, type, maxVal }) {
+  const BAR_W = 52;   // fixed width per bar — always consistent, user scrolls for large arrays
+  const GAP   = 4;
+  const MAX_H = 200;
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      minWidth: 56, flexShrink: 0,
-    }}>
+    // Single horizontally-scrollable container — all rows scroll together
+    <div style={{ overflowX: 'auto', overflowY: 'visible', paddingBottom: 4 }}>
       <div style={{
-        width: '100%', minWidth: 56, height: 56,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 18, fontWeight: 700,
-        background: cellColor.bg,
-        color: cellColor.text,
-        border: `2px solid ${cellColor.border}`,
-        borderRadius: isFirst ? '8px 0 0 8px' : isLast ? '0 8px 8px 0' : '0',
-        borderLeft: isFirst ? `2px solid ${cellColor.border}` : 'none',
-        transition: 'background 300ms ease, border-color 300ms ease, color 300ms ease, transform 200ms ease',
-        transform: isChanged ? 'translateY(-4px) scale(1.06)' : 'none',
-        boxShadow: isActive
-          ? `0 0 0 3px ${cellColor.glow}, 0 6px 20px ${cellColor.shadow}`
-          : isSecond
-          ? `0 0 0 2px ${cellColor.glow}`
-          : 'none',
-        position: 'relative', cursor: 'default',
-        zIndex: isChanged ? 2 : 1,
+        display: 'inline-flex', flexDirection: 'column', gap: 0,
+        minWidth: 'max-content',   // prevents collapsing
       }}>
-        {displayValue}
+
+        {/* ── Pointer label row ── */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', height: 28, gap: GAP, marginBottom: 4 }}>
+          {arrayState.map((_, i) => {
+            const isA = i === activeIndex, isB = i === secondIndex;
+            const col = isA ? (OP_COLORS[type]?.main || '#60a5fa') : '#F2A93B';
+            const lbl = type === 'swap'    ? (isA ? 'i' : isB ? 'j' : '')
+                      : type === 'compare' ? (isA ? 'j' : isB ? 'k' : '')
+                      : isA ? 'i' : '';
+            return (
+              <div key={i} style={{
+                width: BAR_W, flexShrink: 0,
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'flex-end',
+              }}>
+                {(isA || isB) && (
+                  <>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: col, letterSpacing: '.04em', lineHeight: 1.2 }}>{lbl}</span>
+                    <span style={{ fontSize: 13, color: col, lineHeight: 1 }}>▼</span>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Bars row ── */}
+        <div style={{
+          display: 'flex', alignItems: 'flex-end',
+          gap: GAP, height: MAX_H + 4,
+        }}>
+          {arrayState.map((val, i) => {
+            const isA     = i === activeIndex;
+            const isB     = i === secondIndex;
+            const isFlash = flashSet.has(i);
+            const pct     = Math.max(0.04, Math.abs(val) / maxVal);
+            const barH    = Math.round(pct * MAX_H);
+            const colors  = getCellColor(isA, isB, type);
+
+            return (
+              <div key={i} style={{
+                width: BAR_W, flexShrink: 0,
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'flex-end', gap: 3,
+              }}>
+                {/* Value label */}
+                <span style={{
+                  fontSize: 12, fontWeight: 700,
+                  color: colors.text,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  transition: 'color 300ms',
+                  opacity: isA || isB ? 1 : 0.65,
+                  lineHeight: 1,
+                }}>{val}</span>
+
+                {/* Bar */}
+                <div style={{
+                  width: '100%', height: barH,
+                  background: colors.bg,
+                  border: `2px solid ${colors.border}`,
+                  borderRadius: '4px 4px 0 0',
+                  boxShadow: isA
+                    ? `0 0 0 2px ${colors.glow}, 0 -4px 16px ${colors.shadow}`
+                    : isB ? `0 0 0 2px ${colors.glow}` : 'none',
+                  transform: isFlash ? 'scaleY(1.07)' : 'scaleY(1)',
+                  transformOrigin: 'bottom',
+                  transition: 'height 350ms cubic-bezier(.34,1.56,.64,1), background 300ms, border-color 300ms, box-shadow 300ms, transform 220ms',
+                }} />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Index label row ── */}
+        <div style={{ display: 'flex', gap: GAP, marginTop: 3 }}>
+          {arrayState.map((_, i) => (
+            <div key={i} style={{
+              width: BAR_W, flexShrink: 0,
+              textAlign: 'center', fontSize: 11, fontWeight: 600,
+              color: i === activeIndex || i === secondIndex ? '#8b949e' : 'rgba(255,255,255,.2)',
+              borderTop: `1px solid ${
+                i === activeIndex ? (OP_COLORS[type]?.main || '#2E74B5')
+                : i === secondIndex ? '#F2A93B'
+                : 'rgba(255,255,255,.08)'
+              }`,
+              paddingTop: 4,
+              transition: 'color 300ms, border-color 300ms',
+            }}>{i}</div>
+          ))}
+        </div>
+
       </div>
     </div>
   );
 }
 
-function getCellColor(isActive, isSecond, type) {
-  if (isActive) {
-    switch (type) {
-      case 'write':  return { bg: 'rgba(46,116,181,.35)',  border: '#2E74B5', text: '#93c5fd', glow: 'rgba(46,116,181,.5)',  shadow: 'rgba(46,116,181,.3)'  };
-      case 'read':   return { bg: 'rgba(76,175,80,.25)',   border: '#4CAF50', text: '#86efac', glow: 'rgba(76,175,80,.5)',   shadow: 'rgba(76,175,80,.25)'  };
-      case 'swap':   return { bg: 'rgba(242,169,59,.3)',   border: '#F2A93B', text: '#fcd34d', glow: 'rgba(242,169,59,.5)',  shadow: 'rgba(242,169,59,.25)' };
-      case 'compare':return { bg: 'rgba(232,121,249,.25)', border: '#e879f9', text: '#f0abfc', glow: 'rgba(232,121,249,.45)',shadow: 'rgba(232,121,249,.2)' };
-      case 'append': return { bg: 'rgba(76,175,80,.25)',   border: '#4CAF50', text: '#86efac', glow: 'rgba(76,175,80,.5)',   shadow: 'rgba(76,175,80,.25)'  };
-      case 'init':   return { bg: 'rgba(139,92,246,.25)',  border: '#8b5cf6', text: '#c4b5fd', glow: 'rgba(139,92,246,.4)', shadow: 'rgba(139,92,246,.2)'  };
-      default:       return { bg: 'rgba(46,116,181,.35)',  border: '#2E74B5', text: '#93c5fd', glow: 'rgba(46,116,181,.5)',  shadow: 'rgba(46,116,181,.3)'  };
-    }
-  }
-  if (isSecond) {
-    return { bg: 'rgba(242,169,59,.3)', border: '#F2A93B', text: '#fcd34d', glow: 'rgba(242,169,59,.5)', shadow: 'rgba(242,169,59,.25)' };
-  }
+/* ══════════════════════════════════════════════════════
+   CELL VIEW — classic horizontal boxes
+   ══════════════════════════════════════════════════════ */
+function CellView({ arrayState, activeIndex, secondIndex, flashSet, type }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {/* Pointer row */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', height: 28 }}>
+        {arrayState.map((_, i) => {
+          const isA = i === activeIndex, isB = i === secondIndex;
+          if (!isA && !isB) return <div key={i} style={{ minWidth: 56 }} />;
+          const col = isA ? OP_COLORS[type]?.main || '#60a5fa' : '#F2A93B';
+          const lbl = type === 'swap'    ? (isA ? 'i' : 'j')
+                    : type === 'compare' ? (isA ? 'j' : 'k')
+                    : 'i';
+          return (
+            <div key={i} style={{
+              minWidth: 56, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'flex-end',
+            }}>
+              <span style={{ fontSize: 10, fontWeight: 800, color: col }}>{lbl}</span>
+              <span style={{ fontSize: 13, color: col, lineHeight: 1 }}>▼</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Cell row */}
+      <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'nowrap', overflowX: 'auto' }}>
+        {arrayState.map((val, i) => {
+          const isA     = i === activeIndex;
+          const isB     = i === secondIndex;
+          const isFlash = flashSet.has(i);
+          const colors  = getCellColor(isA, isB, type);
+
+          const displayVal = val === null || val === undefined || val === ''
+            ? <span style={{ opacity: 0.4, fontStyle: 'italic' }}>null</span>
+            : String(val);
+
+          return (
+            <div key={i} style={{
+              minWidth: 56, height: 56, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, fontWeight: 700,
+              background: colors.bg,
+              color: colors.text,
+              border: `2px solid ${colors.border}`,
+              borderLeft: i === 0 ? `2px solid ${colors.border}` : 'none',
+              borderRadius: i === 0 ? '8px 0 0 8px' : i === arrayState.length - 1 ? '0 8px 8px 0' : '0',
+              boxShadow: isA
+                ? `0 0 0 3px ${colors.glow}, 0 6px 20px ${colors.shadow}`
+                : isB ? `0 0 0 2px ${colors.glow}` : 'none',
+              transform: isFlash ? 'translateY(-5px) scale(1.08)' : 'none',
+              transition: 'background 300ms, border-color 300ms, color 300ms, transform 250ms cubic-bezier(.34,1.56,.64,1), box-shadow 300ms',
+              zIndex: isFlash ? 2 : 1, position: 'relative',
+              cursor: 'default',
+            }}>{displayVal}</div>
+          );
+        })}
+      </div>
+
+      {/* Index row */}
+      <div style={{ display: 'flex' }}>
+        {arrayState.map((_, i) => (
+          <div key={i} style={{
+            minWidth: 56, textAlign: 'center', fontSize: 11,
+            fontWeight: i === activeIndex || i === secondIndex ? 700 : 400,
+            color: i === activeIndex || i === secondIndex ? '#8b949e' : 'rgba(255,255,255,.2)',
+            transition: 'color 300ms',
+          }}>{i}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Color maps ───────────────────────────────────────────────────────── */
+const OP_COLORS = {
+  write:   { bg: 'rgba(46,116,181,.35)',   border: '#2E74B5', text: '#93c5fd', glow: 'rgba(46,116,181,.55)',   shadow: 'rgba(46,116,181,.35)',  descBg: 'rgba(46,116,181,.1)',  icon: '#60a5fa', main: '#2E74B5' },
+  read:    { bg: 'rgba(76,175,80,.25)',    border: '#4CAF50', text: '#86efac', glow: 'rgba(76,175,80,.55)',    shadow: 'rgba(76,175,80,.25)',   descBg: 'rgba(76,175,80,.08)',  icon: '#86efac', main: '#4CAF50' },
+  swap:    { bg: 'rgba(242,169,59,.3)',    border: '#F2A93B', text: '#fcd34d', glow: 'rgba(242,169,59,.55)',   shadow: 'rgba(242,169,59,.25)',  descBg: 'rgba(242,169,59,.1)',  icon: '#fcd34d', main: '#F2A93B' },
+  compare: { bg: 'rgba(232,121,249,.25)',  border: '#e879f9', text: '#f0abfc', glow: 'rgba(232,121,249,.5)',   shadow: 'rgba(232,121,249,.2)',  descBg: 'rgba(232,121,249,.08)',icon: '#f0abfc', main: '#e879f9' },
+  append:  { bg: 'rgba(76,175,80,.25)',    border: '#4CAF50', text: '#86efac', glow: 'rgba(76,175,80,.55)',    shadow: 'rgba(76,175,80,.25)',   descBg: 'rgba(76,175,80,.08)',  icon: '#86efac', main: '#4CAF50' },
+  init:    { bg: 'rgba(139,92,246,.25)',   border: '#8b5cf6', text: '#c4b5fd', glow: 'rgba(139,92,246,.45)',   shadow: 'rgba(139,92,246,.2)',   descBg: 'rgba(139,92,246,.1)',  icon: '#c4b5fd', main: '#8b5cf6' },
+  highlight:{ bg:'rgba(255,255,255,.06)', border: 'rgba(255,255,255,.14)', text: '#e6edf3', glow: 'transparent', shadow: 'transparent', descBg: 'rgba(255,255,255,.04)', icon: '#8b949e', main: '#8b949e' },
+};
+
+const OP_ICON = {
+  write: '✎', read: '◎', swap: '⇄', compare: '≷', append: '+', init: '◈', highlight: '●',
+};
+
+function getCellColor(isA, isB, type) {
+  if (isA) return OP_COLORS[type] || OP_COLORS.highlight;
+  if (isB) return OP_COLORS.swap;
   return { bg: 'rgba(255,255,255,.04)', border: 'rgba(255,255,255,.12)', text: '#e6edf3', glow: 'transparent', shadow: 'transparent' };
 }
 
-/* ── Pointer arrow row ────────────────────────────────────────────────── */
-function PointerRow({ length, activeIndex, secondIndex, type }) {
-  if (activeIndex === null && secondIndex === null) {
-    return <div style={{ height: 28 }} />;
-  }
-
-  const CELL_W = 56;
-
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-end',
-      height: 28, position: 'relative',
-      marginBottom: 4, overflowX: 'hidden',
-    }}>
-      {Array.from({ length }).map((_, i) => {
-        const isA = i === activeIndex;
-        const isB = i === secondIndex;
-        if (!isA && !isB) return <div key={i} style={{ minWidth: CELL_W }} />;
-
-        const color = type === 'swap'
-          ? '#F2A93B'
-          : type === 'compare'
-          ? '#e879f9'
-          : isA && type === 'write' ? '#2E74B5'
-          : isA && type === 'read'  ? '#4CAF50'
-          : '#2E74B5';
-
-        const label = type === 'swap'
-          ? (isA ? 'i' : 'j')
-          : type === 'compare'
-          ? (isA ? 'j' : 'k')
-          : isA ? 'ptr' : '';
-
-        return (
-          <div key={i} style={{
-            minWidth: CELL_W, display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'flex-end',
-          }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color, letterSpacing: '.04em', marginBottom: 1 }}>
-              {label}
-            </span>
-            <span style={{ fontSize: 14, color, lineHeight: 1 }}>▼</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ── Index label row ──────────────────────────────────────────────────── */
-function IndexRow({ length, activeIndex, secondIndex }) {
-  return (
-    <div style={{ display: 'flex', marginTop: 4 }}>
-      {Array.from({ length }).map((_, i) => {
-        const isActive = i === activeIndex || i === secondIndex;
-        return (
-          <div key={i} style={{
-            minWidth: 56, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 11, fontWeight: isActive ? 700 : 400,
-            color: isActive ? '#8b949e' : 'rgba(255,255,255,.2)',
-            transition: 'color 300ms',
-          }}>
-            {i}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ── Description bar ──────────────────────────────────────────────────── */
-function DescriptionBar({ description, step, totalSteps, type }) {
-  const colors = {
-    init:      { bg: 'rgba(139,92,246,.12)', border: 'rgba(139,92,246,.3)', icon: '◈', iconColor: '#c4b5fd' },
-    write:     { bg: 'rgba(46,116,181,.12)', border: 'rgba(46,116,181,.3)', icon: '✎', iconColor: '#60a5fa' },
-    read:      { bg: 'rgba(76,175,80,.1)',   border: 'rgba(76,175,80,.3)',  icon: '◎', iconColor: '#86efac' },
-    swap:      { bg: 'rgba(242,169,59,.12)', border: 'rgba(242,169,59,.3)', icon: '⇄', iconColor: '#fcd34d' },
-    compare:   { bg: 'rgba(232,121,249,.1)', border: 'rgba(232,121,249,.3)',icon: '?', iconColor: '#f0abfc' },
-    append:    { bg: 'rgba(76,175,80,.1)',   border: 'rgba(76,175,80,.3)',  icon: '+', iconColor: '#86efac' },
-    highlight: { bg: 'rgba(255,255,255,.04)',border: 'rgba(255,255,255,.1)',icon: '●', iconColor: '#8b949e' },
-  };
-  const c = colors[type] || colors.highlight;
-
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: '10px 20px',
-      background: c.bg,
-      borderTop: `1px solid ${c.border}`,
-      flexShrink: 0,
-    }}>
-      <span style={{ fontSize: 16, color: c.iconColor, lineHeight: 1, flexShrink: 0 }}>{c.icon}</span>
-      <span style={{ fontSize: 13, color: '#e6edf3', flex: 1, fontFamily: "'JetBrains Mono', monospace" }}>
-        {description}
-      </span>
-      {totalSteps > 0 && (
-        <span style={{ fontSize: 11, color: '#8b949e', flexShrink: 0, fontWeight: 600 }}>
-          {step} / {totalSteps}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/* ── Output console ───────────────────────────────────────────────────── */
-function OutputConsole({ output, height }) {
-  return (
-    <div
-      style={{
-        borderTop: '1px solid rgba(255,255,255,.07)',
-        flexShrink: 0,
-        height: height || 120,
-        overflowY: 'auto',
-      }}
-    >
-      <div
-        style={{
-          padding: '6px 20px 4px',
-          fontSize: 10,
-          fontWeight: 700,
-          color: '#8b949e',
-          textTransform: 'uppercase',
-          letterSpacing: '.06em',
-          borderBottom: '1px solid rgba(255,255,255,.05)',
-        }}
-      >
-        stdout
-      </div>
-      <pre
-        style={{
-          margin: 0,
-          padding: '8px 20px',
-          fontSize: 12,
-          color: '#a3e635',
-          fontFamily: "'JetBrains Mono', monospace",
-          lineHeight: 1.6,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-        }}
-      >
-        {output}
-      </pre>
-    </div>
-  );
-}
-
-/* ── Type badge ───────────────────────────────────────────────────────── */
+/* ── TypeBadge ──────────────────────────────────────────────────────── */
 function TypeBadge({ type }) {
-  const map = {
-    init:      ['◈ INIT',    '#c4b5fd', 'rgba(139,92,246,.2)'],
-    write:     ['✎ WRITE',   '#60a5fa', 'rgba(46,116,181,.2)'],
-    read:      ['◎ READ',    '#86efac', 'rgba(76,175,80,.2)' ],
-    swap:      ['⇄ SWAP',    '#fcd34d', 'rgba(242,169,59,.2)'],
-    compare:   ['? CMP',     '#f0abfc', 'rgba(232,121,249,.2)'],
-    append:    ['+ APPEND',  '#86efac', 'rgba(76,175,80,.2)' ],
-    highlight: ['● HL',      '#8b949e', 'rgba(255,255,255,.08)'],
-  };
-  const [label, color, bg] = map[type] || map.highlight;
+  const c = OP_COLORS[type] || OP_COLORS.highlight;
   return (
     <span style={{
-      padding: '3px 10px', borderRadius: 999,
-      fontSize: 10, fontWeight: 700,
-      color, background: bg,
+      padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+      color: c.icon, background: c.descBg,
       letterSpacing: '.06em', fontFamily: "'JetBrains Mono', monospace",
-    }}>{label}</span>
+      border: `1px solid ${c.border}`,
+    }}>
+      {OP_ICON[type] || '●'} {type.toUpperCase()}
+    </span>
   );
 }
 
-/* ── Empty state ──────────────────────────────────────────────────────── */
+/* ── OutputConsole ────────────────────────────────────────────────────── */
+function OutputConsole({ output, height }) {
+  return (
+    <div style={{
+      borderTop: '1px solid rgba(255,255,255,.07)',
+      flexShrink: 0, height, overflowY: 'auto',
+      background: '#010409',
+    }}>
+      <div style={{
+        padding: '5px 20px 4px', fontSize: 10, fontWeight: 700,
+        color: '#8b949e', textTransform: 'uppercase', letterSpacing: '.06em',
+        borderBottom: '1px solid rgba(255,255,255,.05)',
+      }}>stdout</div>
+      <pre style={{
+        margin: 0, padding: '8px 20px',
+        fontSize: 12, color: '#a3e635',
+        fontFamily: "'JetBrains Mono', monospace",
+        lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+      }}>{output}</pre>
+    </div>
+  );
+}
+
+/* ── EmptyState ───────────────────────────────────────────────────────── */
 function EmptyState() {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: '100%', minHeight: 200, gap: 12,
+      height: '100%', minHeight: 220, gap: 14,
     }}>
       <div style={{
-        width: 56, height: 56, borderRadius: 14,
-        background: 'rgba(255,255,255,.04)',
-        border: '1.5px solid rgba(255,255,255,.08)',
+        width: 64, height: 64, borderRadius: 16,
+        background: 'rgba(46,116,181,.08)',
+        border: '1.5px solid rgba(46,116,181,.2)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 26,
+        fontSize: 28,
       }}>▦</div>
-      <p style={{ color: '#8b949e', fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
-        Run your code to see the array visualization.<br />
-        <span style={{ fontSize: 12, color: '#555' }}>Use the <code style={{ color: '#93c5fd' }}>Array()</code> helper in your code.</span>
-      </p>
+      <div style={{ textAlign: 'center' }}>
+        <p style={{ color: '#e6edf3', fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+          Array Visualizer
+        </p>
+        <p style={{ color: '#8b949e', fontSize: 13, lineHeight: 1.65, maxWidth: 300, margin: 0 }}>
+          Write your code and hit{' '}
+          <span style={{
+            display: 'inline-block', padding: '1px 8px', borderRadius: 4,
+            background: 'rgba(76,175,80,.15)', color: '#86efac',
+            fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
+          }}>▶ Run</span>{' '}
+          to see step-by-step animation.
+        </p>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {['int[] arr = {1,2,3}', 'arr[i] = v', 'swap(arr,i,j)'].map(h => (
+          <span key={h} style={{
+            padding: '5px 10px', borderRadius: 6,
+            background: 'rgba(255,255,255,.04)',
+            border: '1px solid rgba(255,255,255,.08)',
+            fontSize: 11, color: '#8b949e',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}>{h}</span>
+        ))}
+      </div>
     </div>
   );
 }

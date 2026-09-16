@@ -33,6 +33,18 @@ export function AuthProvider({ children }) {
     return res.data.user;
   }
 
+  // Called after OTP-verified signup — token is already stored, just load user
+  async function loadUser() {
+    try {
+      const res = await getMe();
+      setUser(res.data.user);
+      return res.data.user;
+    } catch (_) {
+      localStorage.removeItem('dsvp_token');
+      setUser(null);
+    }
+  }
+
   function logout() {
     localStorage.removeItem('dsvp_token');
     setUser(null);
@@ -43,7 +55,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, updateUser, loadUser }}>
       {children}
     </AuthContext.Provider>
   );
