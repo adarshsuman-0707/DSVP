@@ -72,15 +72,30 @@ fs.writeFileSync('temp_test.java', code);
 try {
   const jar = path.join(__dirname, 'src', 'services', 'tools', 'dsvp-java-instrumenter.jar');
   const out = execSync(`java -jar "${jar}" temp_test.java`, { encoding: 'utf8' });
-  fs.writeFileSync('temp_instrumented.java', out);
+  fs.writeFileSync('Main.java', out);
   console.log('Successfully instrumented! Length:', out.length);
   // Compile and run
-  execSync('javac temp_instrumented.java');
+  execSync('javac Main.java');
   console.log('Compiled successfully!');
-  const runRes = execSync('java Main', { encoding: 'utf8' });
-  console.log('Run stdout:', runRes);
+  const { spawnSync } = require('child_process');
+  const runRes = spawnSync('java', ['Main'], { encoding: 'utf8' });
+  console.log('Run stdout:\n', runRes.stdout);
+  console.log('Run stderr (trace lines count):', runRes.stderr.split('\n').filter(l => l.startsWith('DSVP_TRACE')).length);
+  const { buildTraceEvents } = require('./src/services/traceGeneratorService');
+  const rawSteps = runRes.stderr.split('\n')
+    .filter(l => l.startsWith('DSVP_TRACE:'))
+    .map(l => JSON.parse(l.slice('DSVP_TRACE:'.length)));
+  
+  const events = buildTraceEvents({
+    language: 'java',
+    rawTrace: { steps: rawSteps },
+    moduleSlug: 'doubly-linked-list',
+    userOutput: runRes.stdout
+  });
+  console.log('Total events built:', events.length);
+  console.log('Categories:', [...new Set(events.map(e => e.category))]);
+  console.log('Types:', [...new Set(events.map(e => e.type))]);
+  console.log('First 5 events summary:', events.slice(0, 5).map(e => ({ step: e.step, type: e.type, category: e.category, isDoubly: e.isDoubly, nodesLen: e.linkedListState?.length, arrLen: e.arrayState?.length })));
 } catch (e) {
   console.error('Error:', e.message);
-  if (e.stdout) console.log('STDOUT:', e.stdout.toString());
-  if (e.stderr) console.log('STDERR:', e.stderr.toString());
 }
