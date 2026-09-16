@@ -206,3 +206,44 @@ button { cursor: pointer; }
   animation: cycleArcFlow 1.1s linear infinite;
 }
 
+/* ── Stack Visualizer Animations ── */
+@keyframes stackDropIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-36px) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(4px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.stack-item-drop {
+  animation: stackDropIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes stackTopPulse {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.4), inset 0 0 8px rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(16, 185, 129, 0.7), inset 0 0 14px rgba(16, 185, 129, 0.4);
+    border-color: rgba(52, 211, 153, 0.95);
+  }
+}
+.stack-top-pulse {
+  animation: stackTopPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes stackPointerBounceH {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(-6px); }
+}
+.stack-pointer-bounce-h {
+  animation: stackPointerBounceH 1.2s ease-in-out infinite;
+}
+
