@@ -94,9 +94,11 @@ export default function LinkedListVisualizer({
   step            = 0,
   totalSteps      = 0,
   userOutput      = '',
+  isDoubly: isDoublyProp = false,
 }) {
   const [flashSet, setFlashSet]           = useState(new Set());
   const prevStateRef                       = useRef([]);
+  const isDoublyStickyRef                 = useRef(false);
   const [stdoutH, setStdoutH]             = useState(110);
   const [resizing, setResizing]           = useState(false);
   const [zoom, setZoom]                   = useState(1);
@@ -104,12 +106,15 @@ export default function LinkedListVisualizer({
   const [showAddresses, setShowAddresses] = useState(true);
   const containerRef                       = useRef(null);
 
-  // Detect Doubly Linked List
+  // Detect Doubly Linked List (via prop, sticky memory, or node data)
   const isDoubly = useMemo(() => {
-    return linkedListState.some(
+    if (isDoublyProp || isDoublyStickyRef.current) return true;
+    const detected = linkedListState.some(
       n => n.prevId !== undefined && n.prevId !== null && n.prevId !== -1
     );
-  }, [linkedListState]);
+    if (detected) isDoublyStickyRef.current = true;
+    return detected;
+  }, [isDoublyProp, linkedListState]);
 
   // Generate deterministic hex memory addresses
   const addrMap = useMemo(() => {
@@ -405,6 +410,7 @@ export default function LinkedListVisualizer({
               layoutMode={layoutMode}
               showAddresses={showAddresses}
               addrMap={addrMap}
+              zoom={zoom}
             />
           )}
         </div>
@@ -464,6 +470,7 @@ function NodeChain({
   layoutMode,
   showAddresses,
   addrMap,
+  zoom = 1,
 }) {
   const containerRef = useRef(null);
   // nodeId -> DOM element (the node card div)
@@ -483,6 +490,16 @@ function NodeChain({
   const indexMap = useMemo(() => {
     const m = new Map();
     nodes.forEach((n, i) => m.set(n.id, i));
+    return m;
+  }, [nodes]);
+
+  /* DLL enhancement: id -> node lookup, so each NodeCard can verify its
+     own back-pointer is actually reciprocated (node.next.prev === node),
+     the single most common DLL bug — a plain address string alone can't
+     show that; comparing the live node data can. */
+  const nodeById = useMemo(() => {
+    const m = new Map();
+    nodes.forEach(n => m.set(n.id, n));
     return m;
   }, [nodes]);
 
@@ -517,40 +534,77 @@ function NodeChain({
     }
   }, []);
 
-  /* FIX-3: Measure DOM positions after render to compute arc coordinates */
+  /* FIX-3: Measure DOM positions after render to compute arc coordinates.
+   *
+   * IMPORTANT: this container sits inside an ancestor with
+   * `transform: scale(zoom)` (the zoom controls in the toolbar above).
+   * getBoundingClientRect() returns POST-transform screen pixels, so the
+   * raw deltas below are already scaled by `zoom`. But the <svg> overlay
+   * we draw these coordinates into is itself a child of that SAME scaled
+   * ancestor — meaning the browser scales it AGAIN when painting. Left
+   * unfixed, the arc lands at the right screen position at 100% zoom
+   * (where the double-scale is a no-op) but drifts further off the real
+   * node position at any other zoom level. Dividing every measured delta
+   * by `zoom` here converts them back into the ancestor's local
+   * (pre-scale) coordinate space, which is what an element living inside
+   * that scaled ancestor should be positioned in.
+   */
+  const measureArcs = useCallback(() => {
+    const containerEl = containerRef.current;
+    if (!containerEl || cycleEdges.length === 0) return;
+    const containerRect = containerEl.getBoundingClientRect();
+    const z = zoom || 1;
+    const arcs = [];
+
+    for (const edge of cycleEdges) {
+      const fromEl = nodeElRefs.current.get(edge.fromId);
+      const toEl   = nodeElRefs.current.get(edge.toId);
+      if (!fromEl || !toEl) continue;
+
+      const fRect = fromEl.getBoundingClientRect();
+      const tRect = toEl.getBoundingClientRect();
+
+      // exit from right-center of source, enter left-center of target
+      arcs.push({
+        ...edge,
+        fx: (fRect.right  - containerRect.left) / z,
+        fy: (fRect.top    - containerRect.top + fRect.height / 2) / z,
+        tx: (tRect.left   - containerRect.left) / z,
+        ty: (tRect.top    - containerRect.top + tRect.height / 2) / z,
+        arcFloor: (Math.max(fRect.bottom, tRect.bottom) - containerRect.top) / z + 72,
+      });
+    }
+    setArcData(arcs);
+  }, [cycleEdges, zoom]);
+
   useEffect(() => {
     if (cycleEdges.length === 0) {
       setArcData([]);
       return;
     }
-    const raf = requestAnimationFrame(() => {
-      const containerEl = containerRef.current;
-      if (!containerEl) return;
-      const containerRect = containerEl.getBoundingClientRect();
-      const arcs = [];
-
-      for (const edge of cycleEdges) {
-        const fromEl = nodeElRefs.current.get(edge.fromId);
-        const toEl   = nodeElRefs.current.get(edge.toId);
-        if (!fromEl || !toEl) continue;
-
-        const fRect = fromEl.getBoundingClientRect();
-        const tRect = toEl.getBoundingClientRect();
-
-        // exit from right-center of source, enter left-center of target
-        arcs.push({
-          ...edge,
-          fx: fRect.right  - containerRect.left,
-          fy: fRect.top    - containerRect.top + fRect.height / 2,
-          tx: tRect.left   - containerRect.left,
-          ty: tRect.top    - containerRect.top + tRect.height / 2,
-          arcFloor: Math.max(fRect.bottom, tRect.bottom) - containerRect.top + 72,
-        });
-      }
-      setArcData(arcs);
-    });
+    const raf = requestAnimationFrame(measureArcs);
     return () => cancelAnimationFrame(raf);
-  }, [cycleEdges, nodes, layoutMode]);
+  }, [cycleEdges, nodes, layoutMode, zoom, measureArcs]);
+
+  // Re-measure whenever the container (or an ancestor panel) resizes —
+  // e.g. dragging the horizontal/vertical split handles elsewhere in the
+  // workspace, or the browser window resizing — since none of those
+  // trigger the effect above (its deps only track data/zoom changes),
+  // and stale coordinates are exactly what makes the arc look "off".
+  useEffect(() => {
+    if (cycleEdges.length === 0) return;
+    const containerEl = containerRef.current;
+    if (!containerEl || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(measureArcs);
+    });
+    ro.observe(containerEl);
+    // The scroll container (<main>, overflow:auto) can also change size
+    // independently of containerEl's own layout box.
+    const scrollParent = containerEl.closest('main');
+    if (scrollParent) ro.observe(scrollParent);
+    return () => ro.disconnect();
+  }, [cycleEdges.length, measureArcs]);
 
   return (
     <div
@@ -626,18 +680,41 @@ function NodeChain({
                         </div>
                       )}
 
-                      {/* Head Tag above Node */}
-                      {isHead && !isActive && (
+                      {/* Head / Tail Tags above Node — DLL enhancement: a
+                          doubly linked list is defined by traversal in
+                          BOTH directions, so marking the tail explicitly
+                          (not just an implicit NULL at the end) makes that
+                          symmetry visible at a glance, same as HEAD does
+                          for forward traversal. */}
+                      {(isHead || (isDoubly && isLast && !isCycleSource)) && !isActive && (
                         <div style={{
                           marginBottom: 6,
-                          display: 'flex', alignItems: 'center', gap: 3,
-                          padding: '2px 8px', borderRadius: 4,
-                          background: 'rgba(245, 158, 11, 0.15)',
-                          border: '1px solid rgba(245, 158, 11, 0.4)',
-                          color: '#f59e0b', fontSize: 9.5, fontWeight: 800,
-                          letterSpacing: '.08em', textTransform: 'uppercase',
+                          display: 'flex', alignItems: 'center', gap: 6,
                         }}>
-                          <span>👑</span> HEAD
+                          {isHead && (
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: 3,
+                              padding: '2px 8px', borderRadius: 4,
+                              background: 'rgba(245, 158, 11, 0.15)',
+                              border: '1px solid rgba(245, 158, 11, 0.4)',
+                              color: '#f59e0b', fontSize: 9.5, fontWeight: 800,
+                              letterSpacing: '.08em', textTransform: 'uppercase',
+                            }}>
+                              <span>👑</span> HEAD
+                            </div>
+                          )}
+                          {isDoubly && isLast && !isCycleSource && (
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: 3,
+                              padding: '2px 8px', borderRadius: 4,
+                              background: 'rgba(129, 140, 248, 0.15)',
+                              border: '1px solid rgba(129, 140, 248, 0.4)',
+                              color: '#a5b4fc', fontSize: 9.5, fontWeight: 800,
+                              letterSpacing: '.08em', textTransform: 'uppercase',
+                            }}>
+                              <span>🏁</span> TAIL
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -652,6 +729,7 @@ function NodeChain({
                           isDoubly={isDoubly}
                           showAddresses={showAddresses}
                           addrMap={addrMap}
+                          nodeById={nodeById}
                         />
                       </div>
 
@@ -810,10 +888,20 @@ function NodeCard({
   isDoubly,
   showAddresses,
   addrMap,
+  nodeById,
 }) {
   const nodeAddr = addrMap.get(node.id) || '0x???';
   const nextAddr = node.nextId != null && node.nextId !== -1 ? addrMap.get(node.nextId) : null;
   const prevAddr = node.prevId != null && node.prevId !== -1 ? addrMap.get(node.prevId) : null;
+
+  // DLL integrity check: does the neighbor actually point back at us?
+  // (node.next.prev should === node, and node.prev.next should === node)
+  // Flags the single most common DLL bug — a forward link set without
+  // updating the matching backward link — right where it happens.
+  const nextNode = isDoubly && nextAddr ? nodeById?.get(node.nextId) : null;
+  const nextLinkBroken = isDoubly && nextAddr && nextNode && nextNode.prevId !== node.id;
+  const prevNode = isDoubly && prevAddr ? nodeById?.get(node.prevId) : null;
+  const prevLinkBroken = isDoubly && prevAddr && prevNode && prevNode.nextId !== node.id;
 
   const colors = getNodeColors(isActive, type);
 
@@ -888,13 +976,18 @@ function NodeCard({
               background: isActive ? 'rgba(139, 92, 246, 0.15)' : 'rgba(139, 92, 246, 0.04)',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
             }}>
-              <span style={{ fontSize: 8.5, fontWeight: 700, color: '#c4b5fd', letterSpacing: '.06em' }}>
-                PREV
+              <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 8.5, fontWeight: 700, color: '#c4b5fd', letterSpacing: '.06em' }}>
+                  PREV
+                </span>
+                {prevLinkBroken && (
+                  <span title="Broken back-link: this node's prev does not point back at this node's next" style={{ fontSize: 9 }}>⚠</span>
+                )}
               </span>
               {/* FIX-2: ← prefix to indicate direction */}
               <span style={{
                 fontSize: 9.5, fontWeight: 700,
-                color: prevAddr ? '#a78bfa' : '#475569',
+                color: prevLinkBroken ? '#f87171' : prevAddr ? '#a78bfa' : '#475569',
                 fontFamily: "'JetBrains Mono', monospace",
                 textAlign: 'center',
               }}>
@@ -934,13 +1027,18 @@ function NodeCard({
           background: colors.nextBg,
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
         }}>
-          <span style={{ fontSize: 9, fontWeight: 700, color: colors.label, letterSpacing: '.06em' }}>
-            NEXT
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: colors.label, letterSpacing: '.06em' }}>
+              NEXT
+            </span>
+            {nextLinkBroken && (
+              <span title="Broken back-link: the next node's prev does not point back at this node" style={{ fontSize: 9 }}>⚠</span>
+            )}
           </span>
           {/* FIX-2: → prefix to indicate direction */}
           <span style={{
             fontSize: 9.5, fontWeight: 700,
-            color: nextAddr ? colors.ptr : '#ef4444',
+            color: nextLinkBroken ? '#f87171' : nextAddr ? colors.ptr : '#ef4444',
             fontFamily: "'JetBrains Mono', monospace",
             textAlign: 'center',
           }}>

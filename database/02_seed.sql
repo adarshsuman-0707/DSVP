@@ -14,9 +14,10 @@ GO
 INSERT INTO dbo.Modules (Name, Slug, Category, Description, IsPremium, SortOrder) VALUES
 ('Array',       'array',        'array',   'Visualize array operations: insert, delete, search, traverse.', 0, 1),
 ('Linked List', 'linked-list',  'list',    'Singly/doubly linked list operations with pointer visualization.', 0, 2),
-('Stack',       'stack',        'stack',   'Push/pop visualized as a vertical stack.', 0, 3),
-('Queue',       'queue',        'queue',   'Enqueue/dequeue with FIFO visualization.', 0, 4),
-('Sorting',     'sorting',      'sorting', 'Bubble, insertion, selection, merge, quick sort animations.', 0, 5);
+('Circular Linked List', 'circular-linked-list', 'list', 'Circular singly linked list with wrap-around pointer visualization.', 0, 3),
+('Stack',       'stack',        'stack',   'Push/pop visualized as a vertical stack.', 0, 4),
+('Queue',       'queue',        'queue',   'Enqueue/dequeue with FIFO visualization.', 0, 5),
+('Sorting',     'sorting',      'sorting', 'Bubble, insertion, selection, merge, quick sort animations.', 0, 6);
 GO
 
 -- Premium modules

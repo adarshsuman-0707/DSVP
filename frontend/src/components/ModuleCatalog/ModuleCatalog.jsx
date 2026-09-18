@@ -9,6 +9,7 @@ const STRUCT_ICONS = {
   'linked-list':         '⛓',
   'doubly-linked-list':  '⇌',
   'array':               '▦',
+  '2d-array':            '▩',
   'stack':               '📚',
   'queue':               '🚦',
   'tree':                '🌳',

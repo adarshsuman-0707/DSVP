@@ -5,8 +5,8 @@ const {
   getUsers, updateUserRole, updateUserPremium, updateUserSubscription, deleteUser,
   getModules, createModule, updateModule, deleteModule,
   getPayments,
-  getFeedback, updateFeedbackStatus,
-  getAnalytics,
+  getFeedback, updateFeedbackStatus, replyToFeedback,
+  getAnalytics, getActivity,
 } = require('../controllers/adminController');
 const { verifyToken, requireAdmin } = require('../middleware/authMiddleware');
 
@@ -35,8 +35,12 @@ router.get   ('/payments',             getPayments);
 // Feedback
 router.get   ('/feedback',             getFeedback);
 router.patch ('/feedback/:id/status',  updateFeedbackStatus);
+router.patch ('/feedback/:id/reply',   replyToFeedback);
 
 // Analytics
 router.get   ('/analytics',            getAnalytics);
+
+// User Activity
+router.get   ('/activity',             getActivity);
 
 module.exports = router;

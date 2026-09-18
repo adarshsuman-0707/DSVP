@@ -16,11 +16,18 @@ final class RuntimeShim {
             private Object data;
             private String type;
             private int length;
-            
+            // Which source variable this instance came from (e.g. "arr1",
+            // "arr2") - every trace event tags itself with this, so two
+            // separately-declared arrays never collapse into a single
+            // "last touched" display slot. Defaults to "" for the rare
+            // internal/reflection path that never sets it explicitly.
+            private String varName = "";
+
             // Constructors for different types
-            DSVPArray(int size, String arrayType){ 
+            DSVPArray(int size, String arrayType, String varName){
                 this.type = arrayType;
                 this.length = size;
+                this.varName = varName;
                 switch(arrayType) {
                     case "int": data = new int[size]; break;
                     case "long": data = new long[size]; break;
@@ -31,13 +38,13 @@ final class RuntimeShim {
                 }
                 emitSnap("init",-1,"0");
             }
-            
-            DSVPArray(int[] vals){ data=vals; type="int"; length=vals.length; emitSnap("init",-1,"0"); }
-            DSVPArray(long[] vals){ data=vals; type="long"; length=vals.length; emitSnap("init",-1,"0"); }
-            DSVPArray(float[] vals){ data=vals; type="float"; length=vals.length; emitSnap("init",-1,"0"); }
-            DSVPArray(double[] vals){ data=vals; type="double"; length=vals.length; emitSnap("init",-1,"0"); }
-            DSVPArray(char[] vals){ data=vals; type="char"; length=vals.length; emitSnap("init",-1,"0"); }
-            DSVPArray(String[] vals){ data=vals; type="String"; length=vals.length; emitSnap("init",-1,"0"); }
+
+            DSVPArray(int[] vals, String varName){ data=vals; type="int"; length=vals.length; this.varName=varName; emitSnap("init",-1,"0"); }
+            DSVPArray(long[] vals, String varName){ data=vals; type="long"; length=vals.length; this.varName=varName; emitSnap("init",-1,"0"); }
+            DSVPArray(float[] vals, String varName){ data=vals; type="float"; length=vals.length; this.varName=varName; emitSnap("init",-1,"0"); }
+            DSVPArray(double[] vals, String varName){ data=vals; type="double"; length=vals.length; this.varName=varName; emitSnap("init",-1,"0"); }
+            DSVPArray(char[] vals, String varName){ data=vals; type="char"; length=vals.length; this.varName=varName; emitSnap("init",-1,"0"); }
+            DSVPArray(String[] vals, String varName){ data=vals; type="String"; length=vals.length; this.varName=varName; emitSnap("init",-1,"0"); }
             
           private String snapStr(){
     StringBuilder s = new StringBuilder("[");
@@ -76,12 +83,79 @@ final class RuntimeShim {
                     default: return null;
                 }
             }
-            
+
             private void emitSnap(String op,int idx,String val){
-                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+snapStr()+"}");
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"var\\":\\""+varName+"\\",\\"snap\\":"+snapStr()+"}");
                 System.err.flush();
             }
             
+            // Used by StackFieldInstrumentVisitor for hand-rolled array+top
+            // Stack classes - takes a plain int[] snapshot directly (no
+            // DSVPArray instance involved), so a user's own Stack class
+            // never depends on DSVPArray or the java.util.Stack shim at all.
+            public static void emitFieldSnap(String op, int idx, String val, int[] snap){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < snap.length; i++){
+                    s.append(snap[i]);
+                    if(i < snap.length - 1) s.append(",");
+                }
+                s.append("]");
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+s+"}");
+                System.err.flush();
+            }
+
+            public static void emitFieldSnap(String op, int idx, String val, long[] snap){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < snap.length; i++){
+                    s.append(snap[i]);
+                    if(i < snap.length - 1) s.append(",");
+                }
+                s.append("]");
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+s+"}");
+                System.err.flush();
+            }
+
+            public static void emitFieldSnap(String op, int idx, String val, double[] snap){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < snap.length; i++){
+                    s.append(snap[i]);
+                    if(i < snap.length - 1) s.append(",");
+                }
+                s.append("]");
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+s+"}");
+                System.err.flush();
+            }
+
+            public static void emitFieldSnap(String op, int idx, String val, float[] snap){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < snap.length; i++){
+                    s.append(snap[i]);
+                    if(i < snap.length - 1) s.append(",");
+                }
+                s.append("]");
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+s+"}");
+                System.err.flush();
+            }
+
+            public static void emitFieldSnap(String op, int idx, String val, char[] snap){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < snap.length; i++){
+                    s.append("\\"").append(escapeJsonStr(String.valueOf(snap[i]))).append("\\"");
+                    if(i < snap.length - 1) s.append(",");
+                }
+                s.append("]");
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+escapeJsonStr(val)+"\\",\\"snap\\":"+s+"}");
+                System.err.flush();
+            }
+
+            private static String escapeJsonStr(String str) {
+                return str.replace("\\\\", "\\\\\\\\")
+                          .replace("\\"", "\\\\\\"")
+                          .replace("\\n", "\\\\n")
+                          .replace("\\r", "\\\\r")
+                          .replace("\\t", "\\\\t");
+            }
+
             public static void traceCall(String func, String argsJson){
                 System.err.println("DSVP_TRACE:{\\"op\\":\\"call\\",\\"func\\":\\""+func+"\\",\\"args\\":"+argsJson+"}");
                 System.err.flush();
@@ -127,7 +201,53 @@ final class RuntimeShim {
                 emitSnap("write",i,v==null?"null":String.valueOf(v));
             }
             
-            public void swap(int i,int j){ 
+            // Compound-assignment support (+=, -=, *=, /=, %=). Once a
+            // variable becomes DSVPArray, `arr[i] += v` no longer compiles
+            // at all - you can't apply an operator to a method-backed
+            // wrapper - so every compound op on a tracked element MUST be
+            // rewritten to one of these. Each reuses the existing typed
+            // getter/setter, so a compound op naturally emits both a
+            // "read" (old value) and a "write" (new value) trace event,
+            // same as if the user had written `arr[i] = arr[i] + v;` by
+            // hand - and returns the new value, matching Java's own
+            // compound-assignment expression semantics.
+            public int addInt(int i,int d){ int v=getInt(i)+d; setInt(i,v); return v; }
+            public int subInt(int i,int d){ int v=getInt(i)-d; setInt(i,v); return v; }
+            public int mulInt(int i,int d){ int v=getInt(i)*d; setInt(i,v); return v; }
+            public int divInt(int i,int d){ int v=getInt(i)/d; setInt(i,v); return v; }
+            public int modInt(int i,int d){ int v=getInt(i)%d; setInt(i,v); return v; }
+
+            public long addLong(int i,long d){ long v=getLong(i)+d; setLong(i,v); return v; }
+            public long subLong(int i,long d){ long v=getLong(i)-d; setLong(i,v); return v; }
+            public long mulLong(int i,long d){ long v=getLong(i)*d; setLong(i,v); return v; }
+            public long divLong(int i,long d){ long v=getLong(i)/d; setLong(i,v); return v; }
+            public long modLong(int i,long d){ long v=getLong(i)%d; setLong(i,v); return v; }
+
+            public double addDouble(int i,double d){ double v=getDouble(i)+d; setDouble(i,v); return v; }
+            public double subDouble(int i,double d){ double v=getDouble(i)-d; setDouble(i,v); return v; }
+            public double mulDouble(int i,double d){ double v=getDouble(i)*d; setDouble(i,v); return v; }
+            public double divDouble(int i,double d){ double v=getDouble(i)/d; setDouble(i,v); return v; }
+            public double modDouble(int i,double d){ double v=getDouble(i)%d; setDouble(i,v); return v; }
+
+            public float addFloat(int i,float d){ float v=getFloat(i)+d; setFloat(i,v); return v; }
+            public float subFloat(int i,float d){ float v=getFloat(i)-d; setFloat(i,v); return v; }
+            public float mulFloat(int i,float d){ float v=getFloat(i)*d; setFloat(i,v); return v; }
+            public float divFloat(int i,float d){ float v=getFloat(i)/d; setFloat(i,v); return v; }
+            public float modFloat(int i,float d){ float v=getFloat(i)%d; setFloat(i,v); return v; }
+
+            // char compound ops implicitly narrow back to char, exactly
+            // like Java's own `charArr[i] += 1;` does.
+            public char addChar(int i,int d){ char v=(char)(getChar(i)+d); setChar(i,v); return v; }
+            public char subChar(int i,int d){ char v=(char)(getChar(i)-d); setChar(i,v); return v; }
+            public char mulChar(int i,int d){ char v=(char)(getChar(i)*d); setChar(i,v); return v; }
+            public char divChar(int i,int d){ char v=(char)(getChar(i)/d); setChar(i,v); return v; }
+            public char modChar(int i,int d){ char v=(char)(getChar(i)%d); setChar(i,v); return v; }
+
+            // String only supports +=  (concatenation) - the only compound
+            // operator Java itself allows on String.
+            public String addString(int i,String d){ String v=getString(i)+d; setString(i,v); return v; }
+
+            public void swap(int i,int j){
                 switch(type) {
                     case "int": int ti=((int[])data)[i]; ((int[])data)[i]=((int[])data)[j]; ((int[])data)[j]=ti; break;
                     case "long": long tl=((long[])data)[i]; ((long[])data)[i]=((long[])data)[j]; ((long[])data)[j]=tl; break;
@@ -184,6 +304,254 @@ final class RuntimeShim {
             public boolean neqChar(int i,int j){ emitSnap("compare",i,String.valueOf(j)); return ((char[])data)[i]!=((char[])data)[j]; }
             
             @Override public String toString(){ return snapStr(); }
+        }
+        """;
+
+    // Only injected when the user actually has a java.util.Stack<T> usage
+    // that StackInstrumentVisitor rewrote to DSVPStack<T> — kept fully out
+    // of the generated source otherwise, so "no DSVPStack dependency" holds
+    // for any project (like a hand-rolled Stack class) that never uses it.
+    static final String STACK_SOURCE = """
+        class DSVPStack<T> implements Iterable<T> {
+            private java.util.ArrayList<T> data = new java.util.ArrayList<>();
+
+            DSVPStack(){ emitSnap("init",-1,"0"); }
+
+            private String snapStr(){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < data.size(); i++) {
+                    Object val = data.get(i);
+                    if(val == null) {
+                        s.append("null");
+                    } else if(val instanceof String) {
+                        s.append("\\"").append(escapeJson((String) val)).append("\\"");
+                    } else if(val instanceof Character) {
+                        s.append("\\"").append(escapeJson(val.toString())).append("\\"");
+                    } else {
+                        s.append(val);
+                    }
+                    if(i < data.size() - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private String escapeJson(String str) {
+                return str.replace("\\\\", "\\\\\\\\")
+                          .replace("\\"", "\\\\\\"")
+                          .replace("\\n", "\\\\n")
+                          .replace("\\r", "\\\\r")
+                          .replace("\\t", "\\\\t");
+            }
+
+            private void emitSnap(String op,int idx,String val){
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+snapStr()+"}");
+                System.err.flush();
+            }
+
+            public void push(T v){ data.add(v); emitSnap("append", data.size()-1, v==null?"null":String.valueOf(v)); }
+
+            public T pop(){
+                if(data.isEmpty()) throw new java.util.EmptyStackException();
+                int idx = data.size()-1;
+                T v = data.remove(idx);
+                emitSnap("delete", idx, v==null?"null":String.valueOf(v));
+                return v;
+            }
+
+            public T peek(){
+                if(data.isEmpty()) throw new java.util.EmptyStackException();
+                int idx = data.size()-1;
+                T v = data.get(idx);
+                emitSnap("read", idx, v==null?"null":String.valueOf(v));
+                return v;
+            }
+
+            public boolean isEmpty(){ return data.isEmpty(); }
+            public int size(){ return data.size(); }
+            public boolean contains(Object v){ return data.contains(v); }
+            public java.util.Iterator<T> iterator(){ return data.iterator(); }
+
+            @Override public String toString(){ return snapStr(); }
+        }
+        """;
+
+    // Only injected when the user actually has a java.util.Queue<T> usage
+    // (LinkedList/ArrayDeque behind it) that QueueInstrumentVisitor rewrote
+    // to DSVPQueue<T> — kept fully out of the generated source otherwise,
+    // same conditional-injection pattern as STACK_SOURCE. FIFO: offer/add
+    // appends at the rear (end of the backing list); poll/remove takes from
+    // the front (index 0) — mirrors DSVPArray's "append" / "delete at idx 0"
+    // event shape so QueueVisualizer can reuse the same array-event mapping
+    // the frontend already uses for Stack.
+    static final String QUEUE_SOURCE = """
+        class DSVPQueue<T> implements Iterable<T> {
+            private java.util.ArrayList<T> data = new java.util.ArrayList<>();
+
+            DSVPQueue(){ emitSnap("init",-1,"0"); }
+
+            private String snapStr(){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < data.size(); i++) {
+                    Object val = data.get(i);
+                    if(val == null) {
+                        s.append("null");
+                    } else if(val instanceof String) {
+                        s.append("\\"").append(escapeJson((String) val)).append("\\"");
+                    } else if(val instanceof Character) {
+                        s.append("\\"").append(escapeJson(val.toString())).append("\\"");
+                    } else {
+                        s.append(val);
+                    }
+                    if(i < data.size() - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private String escapeJson(String str) {
+                return str.replace("\\\\", "\\\\\\\\")
+                          .replace("\\"", "\\\\\\"")
+                          .replace("\\n", "\\\\n")
+                          .replace("\\r", "\\\\r")
+                          .replace("\\t", "\\\\t");
+            }
+
+            private void emitSnap(String op,int idx,String val){
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"idx\\":"+idx+",\\"val\\":\\""+val+"\\",\\"snap\\":"+snapStr()+"}");
+                System.err.flush();
+            }
+
+            public boolean offer(T v){ data.add(v); emitSnap("append", data.size()-1, v==null?"null":String.valueOf(v)); return true; }
+            public boolean add(T v){ return offer(v); }
+
+            public T poll(){
+                if(data.isEmpty()) return null;
+                T v = data.remove(0);
+                emitSnap("delete", 0, v==null?"null":String.valueOf(v));
+                return v;
+            }
+
+            public T remove(){
+                if(data.isEmpty()) throw new java.util.NoSuchElementException();
+                T v = data.remove(0);
+                emitSnap("delete", 0, v==null?"null":String.valueOf(v));
+                return v;
+            }
+
+            public T peek(){
+                if(data.isEmpty()) return null;
+                T v = data.get(0);
+                emitSnap("read", 0, v==null?"null":String.valueOf(v));
+                return v;
+            }
+
+            public T element(){
+                if(data.isEmpty()) throw new java.util.NoSuchElementException();
+                T v = data.get(0);
+                emitSnap("read", 0, v==null?"null":String.valueOf(v));
+                return v;
+            }
+
+            public boolean isEmpty(){ return data.isEmpty(); }
+            public int size(){ return data.size(); }
+            public boolean contains(Object v){ return data.contains(v); }
+            public java.util.Iterator<T> iterator(){ return data.iterator(); }
+
+            @Override public String toString(){ return snapStr(); }
+        }
+        """;
+
+    // Only injected when Array2DInstrumentVisitor actually rewrote an
+    // int[][]/char[][] local — kept fully out of generated source otherwise,
+    // same conditional-injection pattern as STACK_SOURCE.
+    static final String ARRAY2D_SOURCE = """
+        class DSVPArray2DInt {
+            private int[][] data;
+
+            DSVPArray2DInt(int rows, int cols){ data = new int[rows][cols]; emit("init2d",-1,-1,"0"); }
+            DSVPArray2DInt(int[][] vals){ data = vals; emit("init2d",-1,-1,"0"); }
+
+            private String gridStr(){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < data.length; i++){
+                    s.append("[");
+                    for(int j = 0; j < data[i].length; j++){
+                        s.append(data[i][j]);
+                        if(j < data[i].length - 1) s.append(",");
+                    }
+                    s.append("]");
+                    if(i < data.length - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private void emit(String op,int r,int c,String val){
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"row\\":"+r+",\\"col\\":"+c+",\\"val\\":\\""+val+"\\",\\"grid\\":"+gridStr()+"}");
+                System.err.flush();
+            }
+
+            public int get(int r,int c){ int v = data[r][c]; emit("read2d",r,c,String.valueOf(v)); return v; }
+            public void set(int r,int c,int v){ data[r][c] = v; emit("write2d",r,c,String.valueOf(v)); }
+            public int rows(){ return data.length; }
+            public int cols(){ return data.length > 0 ? data[0].length : 0; }
+
+            // Compound-assignment support - same reasoning as DSVPArray's
+            // addInt/subInt/etc: grid[i][j] += v no longer compiles once
+            // grid is DSVPArray2DInt, so it must be rewritten to one of
+            // these instead. Reuses get/set so tracing stays correct.
+            public int addInt(int r,int c,int d){ int v=get(r,c)+d; set(r,c,v); return v; }
+            public int subInt(int r,int c,int d){ int v=get(r,c)-d; set(r,c,v); return v; }
+            public int mulInt(int r,int c,int d){ int v=get(r,c)*d; set(r,c,v); return v; }
+            public int divInt(int r,int c,int d){ int v=get(r,c)/d; set(r,c,v); return v; }
+            public int modInt(int r,int c,int d){ int v=get(r,c)%d; set(r,c,v); return v; }
+
+            @Override public String toString(){ return gridStr(); }
+        }
+        class DSVPArray2DChar {
+            private char[][] data;
+
+            DSVPArray2DChar(int rows, int cols){ data = new char[rows][cols]; emit("init2d",-1,-1,""); }
+            DSVPArray2DChar(char[][] vals){ data = vals; emit("init2d",-1,-1,""); }
+
+            private String escapeJson(String str) {
+                return str.replace("\\\\", "\\\\\\\\")
+                          .replace("\\"", "\\\\\\"")
+                          .replace("\\n", "\\\\n")
+                          .replace("\\r", "\\\\r")
+                          .replace("\\t", "\\\\t");
+            }
+
+            private String gridStr(){
+                StringBuilder s = new StringBuilder("[");
+                for(int i = 0; i < data.length; i++){
+                    s.append("[");
+                    for(int j = 0; j < data[i].length; j++){
+                        s.append("\\"").append(escapeJson(String.valueOf(data[i][j]))).append("\\"");
+                        if(j < data[i].length - 1) s.append(",");
+                    }
+                    s.append("]");
+                    if(i < data.length - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private void emit(String op,int r,int c,String val){
+                System.err.println("DSVP_TRACE:{\\"op\\":\\""+op+"\\",\\"row\\":"+r+",\\"col\\":"+c+",\\"val\\":\\""+escapeJson(val)+"\\",\\"grid\\":"+gridStr()+"}");
+                System.err.flush();
+            }
+
+            public char get(int r,int c){ char v = data[r][c]; emit("read2d",r,c,String.valueOf(v)); return v; }
+            public void set(int r,int c,char v){ data[r][c] = v; emit("write2d",r,c,String.valueOf(v)); }
+
+            public char addChar(int r,int c,int d){ char v=(char)(get(r,c)+d); set(r,c,v); return v; }
+            public char subChar(int r,int c,int d){ char v=(char)(get(r,c)-d); set(r,c,v); return v; }
+            public char mulChar(int r,int c,int d){ char v=(char)(get(r,c)*d); set(r,c,v); return v; }
+            public char divChar(int r,int c,int d){ char v=(char)(get(r,c)/d); set(r,c,v); return v; }
+            public char modChar(int r,int c,int d){ char v=(char)(get(r,c)%d); set(r,c,v); return v; }
+
+            public int rows(){ return data.length; }
+            public int cols(){ return data.length > 0 ? data[0].length : 0; }
+
+            @Override public String toString(){ return gridStr(); }
         }
         """;
 }

@@ -47,6 +47,16 @@ const UserModel = {
       .query('UPDATE dbo.Users SET LastLoginAt = SYSUTCDATETIME() WHERE UserId = @UserId');
   },
 
+  async logEvent(userId, eventType, meta = null) {
+    const pool = await getPool();
+    await pool
+      .request()
+      .input('UserId', sql.Int, userId)
+      .input('EventType', sql.VarChar(50), eventType)
+      .input('MetaJson', sql.NVarChar(sql.MAX), meta ? JSON.stringify(meta) : null)
+      .query(`INSERT INTO dbo.AnalyticsEvents (UserId, EventType, MetaJson) VALUES (@UserId, @EventType, @MetaJson)`);
+  },
+
   async listAll({ page = 1, pageSize = 20 } = {}) {
     const pool = await getPool();
     const offset = (page - 1) * pageSize;

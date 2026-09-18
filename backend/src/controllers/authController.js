@@ -32,6 +32,7 @@ async function register(req, res, next) {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await UserModel.createUser({ fullName, email, passwordHash });
+    await UserModel.logEvent(user.UserId, 'signup');
     const token = generateToken(user);
 
     res.status(201).json({ user, token });
@@ -58,6 +59,7 @@ async function login(req, res, next) {
     }
 
     await UserModel.updateLastLogin(user.UserId);
+    await UserModel.logEvent(user.UserId, 'login');
     const token = generateToken(user);
 
     res.json({

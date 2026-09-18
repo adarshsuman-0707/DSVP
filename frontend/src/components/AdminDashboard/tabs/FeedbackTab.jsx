@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { getAdminFeedback, updateFeedbackStatus } from '../../../services/api';
+import { getAdminFeedback, updateFeedbackStatus, replyToFeedback } from '../../../services/api';
 import {
   PageHeader, Card, Btn, Badge, THead, TRow, TD, Avatar,
   FilterChips, Pagination, Spinner, ErrorBanner, EmptyState,
-  Modal, fmtDate,
+  Modal, Textarea, fmtDate,
 } from '../ui';
 
 const STATUS_FILTERS = [
@@ -27,6 +27,9 @@ export default function FeedbackTab() {
   const [error,   setError]   = useState('');
   const [detail,  setDetail]  = useState(null);
   const [updating,setUpdating]= useState(null);   // id being updated
+  const [replyText, setReplyText] = useState('');
+  const [replying,  setReplying]  = useState(false);
+  const [replyError, setReplyError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -48,6 +51,31 @@ export default function FeedbackTab() {
       if (detail?.FeedbackId === item.FeedbackId) setDetail(d => ({ ...d, Status: next }));
     } catch { setError('Failed to update status.'); }
     setUpdating(null);
+  }
+
+  function openDetail(item) {
+    setDetail(item);
+    setReplyText('');
+    setReplyError('');
+  }
+
+  async function sendReply() {
+    if (!replyText.trim()) { setReplyError('Reply cannot be empty.'); return; }
+    setReplying(true);
+    setReplyError('');
+    try {
+      await replyToFeedback(detail.FeedbackId, replyText.trim());
+      const now = new Date().toISOString();
+      setItems(prev => prev.map(x => x.FeedbackId === detail.FeedbackId
+        ? { ...x, AdminReply: replyText.trim(), RespondedAt: now }
+        : x));
+      setDetail(d => ({ ...d, AdminReply: replyText.trim(), RespondedAt: now }));
+      setReplyText('');
+    } catch {
+      setReplyError('Failed to send reply.');
+    } finally {
+      setReplying(false);
+    }
   }
 
   return (
@@ -99,7 +127,7 @@ export default function FeedbackTab() {
                         subtitle="Feedback submitted by users will appear here." />
                     </td></tr>
                   ) : items.map(item => (
-                    <TRow key={item.FeedbackId} onClick={() => setDetail(item)}>
+                    <TRow key={item.FeedbackId} onClick={() => openDetail(item)}>
                       <TD>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <Avatar name={item.FullName || 'Anonymous'} size={30} />
@@ -155,7 +183,7 @@ export default function FeedbackTab() {
               <div style={{ fontSize: 15, fontWeight: 700, color: '#1e293b' }}>{detail.Subject}</div>
             </div>
 
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase',
                 letterSpacing: '.05em', marginBottom: 6 }}>Message</div>
               <div style={{
@@ -163,6 +191,50 @@ export default function FeedbackTab() {
                 padding: 16, fontSize: 14, color: '#374151', lineHeight: 1.7,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               }}>{detail.Message}</div>
+            </div>
+
+            {/* Existing admin reply, if any — the user sees this on their side too */}
+            {detail.AdminReply && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase',
+                  letterSpacing: '.05em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>Your Reply</span>
+                  {detail.RespondedAt && <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>· {fmtDate(detail.RespondedAt)}</span>}
+                  {!detail.UserSeen && (
+                    <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: '#2E74B5',
+                      background: '#EFF6FF', border: '1px solid #bfdbfe', borderRadius: 999, padding: '1px 8px' }}>
+                      Not seen by user yet
+                    </span>
+                  )}
+                </div>
+                <div style={{
+                  background: '#EFF6FF', border: '1px solid #bfdbfe', borderRadius: 10,
+                  padding: 16, fontSize: 14, color: '#1e40af', lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>{detail.AdminReply}</div>
+              </div>
+            )}
+
+            {/* Reply composer */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase',
+                letterSpacing: '.05em', marginBottom: 6 }}>
+                {detail.AdminReply ? 'Send Another Reply' : 'Reply to User'}
+              </div>
+              <Textarea
+                value={replyText}
+                onChange={setReplyText}
+                placeholder="Write a response the user will see on their end…"
+                rows={3}
+                maxLength={2000}
+                disabled={replying}
+              />
+              {replyError && <p style={{ fontSize: 12, color: '#dc2626', marginTop: 6 }}>{replyError}</p>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <Btn variant="primary" size="sm" disabled={replying} onClick={sendReply}>
+                  {replying ? 'Sending…' : '✉ Send Reply'}
+                </Btn>
+              </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',

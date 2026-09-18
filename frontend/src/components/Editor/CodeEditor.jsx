@@ -19,6 +19,7 @@ export default function CodeEditor({
   errorMessage = '',
   onDismissError = null,
   disabled = false,
+  theme = 'dark',
 }) {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -98,7 +99,7 @@ export default function CodeEditor({
       )}
       <Editor
         height="100%"
-        theme="vs-dark"
+        theme={theme === 'light' ? 'light' : 'vs-dark'}
         language={monacoLanguage(language)}
         value={value}
         onChange={(v) => {

@@ -18,7 +18,8 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "mssql": "^11.0.1",
-    "nodemailer": "6.9.14"
+    "nodemailer": "6.9.14",
+    "razorpay": "^2.9.8"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

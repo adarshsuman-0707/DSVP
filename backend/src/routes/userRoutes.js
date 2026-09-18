@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { verifyToken } = require('../middleware/authMiddleware');
 const UserModel = require('../models/userModel');
 const { sql, getPool } = require('../config/db');
+const FeedbackModel = require('../models/feedbackModel');
 
 router.get('/me', verifyToken, async (req, res, next) => {
   try {
@@ -129,11 +130,41 @@ router.post('/feedback', verifyToken, async (req, res, next) => {
         VALUES (@UserId, @Subject, @Message, 'open')
       `);
 
-    res.status(201).json({ 
+    res.status(201).json({
       message: 'Feedback submitted successfully',
       feedbackId: result.recordset[0].FeedbackId,
       createdAt: result.recordset[0].CreatedAt
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/users/feedback - List the current user's own feedback + admin replies
+router.get('/feedback', verifyToken, async (req, res, next) => {
+  try {
+    const feedback = await FeedbackModel.listForUser(req.user.userId);
+    res.json({ feedback });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/users/feedback/unseen-count - For the notification bell badge
+router.get('/feedback/unseen-count', verifyToken, async (req, res, next) => {
+  try {
+    const count = await FeedbackModel.countUnseenForUser(req.user.userId);
+    res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/users/feedback/:id/seen - Acknowledge a status change / reply
+router.patch('/feedback/:id/seen', verifyToken, async (req, res, next) => {
+  try {
+    await FeedbackModel.markSeen(req.params.id, req.user.userId);
+    res.json({ message: 'Marked as seen' });
   } catch (err) {
     next(err);
   }

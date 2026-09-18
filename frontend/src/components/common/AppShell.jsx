@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import FeedbackModal from './FeedbackModal';
+import NotificationBell from './NotificationBell';
 
 /* ── nav items ── */
 const NAV = [
@@ -138,6 +139,29 @@ export default function AppShell({ children }) {
           )}
         </nav>
 
+        {/* upgrade to premium */}
+        {!user?.IsPremium && !collapsed && (
+          <div style={{
+            margin: '0 10px 14px', padding: '14px', borderRadius: 12,
+            background: 'linear-gradient(135deg,#1F4E79,#2E74B5)',
+            color: '#fff', flexShrink: 0,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+              <span>👑</span> Upgrade to Premium
+            </div>
+            <p style={{ fontSize: 11, color: 'rgba(255,255,255,.75)', margin: '0 0 10px' }}>
+              Unlock unlimited practice, advanced analytics, and more.
+            </p>
+            <button
+              onClick={() => navigate('/pricing')}
+              style={{
+                width: '100%', padding: '7px 0', borderRadius: 8, border: 'none',
+                background: '#fff', color: '#1F4E79', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}
+            >Upgrade Now →</button>
+          </div>
+        )}
+
         {/* user footer */}
         <div style={{
           borderTop: '1px solid #e2e8f0',
@@ -219,6 +243,11 @@ export default function AppShell({ children }) {
               <span style={{ fontSize: 14 }}>💬</span>
               Feedback
             </button>
+
+            {/* Notification bell — shows status changes / replies on the
+                user's own submitted feedback, which they otherwise have
+                no way to discover. */}
+            <NotificationBell />
 
             {user?.Role === 'admin' && (
               <span style={{

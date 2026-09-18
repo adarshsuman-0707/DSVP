@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { getAdminModules, createAdminModule, updateAdminModule, deleteAdminModule } from '../../../services/api';
 import {
   PageHeader, Card, Btn, Badge, THead, TRow, TD,
-  FilterChips, Spinner, ErrorBanner, EmptyState,
+  SearchBar, FilterChips, Pagination, Spinner, ErrorBanner, EmptyState,
   Modal, FormField, Input, Select, Textarea, Toggle,
 } from '../ui';
 
@@ -15,9 +15,13 @@ const CAT_FILTERS = [
 ];
 
 const BLANK = { name: '', slug: '', category: 'array', description: '', isPremium: false, sortOrder: 0, isActive: true };
+const PAGE_SIZE = 15;
 
 export default function ModulesTab() {
   const [modules,  setModules]  = useState([]);
+  const [total,    setTotal]    = useState(0);
+  const [page,     setPage]     = useState(1);
+  const [search,   setSearch]   = useState('');
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
   const [catFilter, setCat]     = useState('all');
@@ -27,18 +31,31 @@ export default function ModulesTab() {
 
   const load = useCallback(() => {
     setLoading(true); setError('');
-    getAdminModules()
-      .then(r => setModules(r.data.modules || []))
+    getAdminModules({ page, pageSize: PAGE_SIZE, category: catFilter, search })
+      .then(r => { setModules(r.data.modules || []); setTotal(r.data.total || 0); })
       .catch(() => setError('Failed to load modules.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [page, catFilter, search]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [catFilter, search]);
 
-  const visible = catFilter === 'all' ? modules : modules.filter(m => m.Category === catFilter);
+  const visible = modules;
 
   function openCreate() { setForm({ ...BLANK, _mode: 'create' }); }
-  function openEdit(m)  { setForm({ ...m, _mode: 'edit', isPremium: !!m.IsPremium, isActive: !!m.IsActive, sortOrder: m.SortOrder ?? 0 }); }
+  function openEdit(m)  {
+    setForm({
+      _mode: 'edit',
+      ModuleId: m.ModuleId,
+      name: m.Name ?? '',
+      slug: m.Slug ?? '',
+      category: m.Category ?? 'array',
+      description: m.Description ?? '',
+      isPremium: !!m.IsPremium,
+      isActive: !!m.IsActive,
+      sortOrder: m.SortOrder ?? 0,
+    });
+  }
 
   async function handleSave() {
     if (!form.name?.trim() || !form.slug?.trim() || !form.category) {
@@ -62,8 +79,8 @@ export default function ModulesTab() {
   async function handleDelete(m) {
     try {
       await deleteAdminModule(m.ModuleId);
-      setModules(prev => prev.map(x => x.ModuleId === m.ModuleId ? { ...x, IsActive: 0 } : x));
       setConfirm(null);
+      load();
     } catch { setError('Failed to deactivate module.'); setConfirm(null); }
   }
 
@@ -71,43 +88,47 @@ export default function ModulesTab() {
     <div style={{ padding: '32px 32px' }}>
       <PageHeader
         title="Modules"
-        subtitle={`${modules.length} total modules`}
+        subtitle={`${total} total modules`}
         action={<Btn variant="success" onClick={openCreate}>+ New Module</Btn>}
       />
 
       <ErrorBanner message={error} />
 
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search name or slug…" />
         <FilterChips options={CAT_FILTERS} value={catFilter} onChange={setCat} />
       </div>
 
       <Card>
         {loading ? <Spinner /> : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <THead cols={['Name', 'Slug', 'Category', 'Type', 'Status', 'Order', '']} />
-              <tbody>
-                {visible.length === 0 ? (
-                  <tr><td colSpan={7}><EmptyState icon="📦" title="No modules" /></td></tr>
-                ) : visible.map(m => (
-                  <TRow key={m.ModuleId}>
-                    <TD><span style={{ fontWeight: 600, color: '#1e293b' }}>{m.Name}</span></TD>
-                    <TD><code style={{ fontSize: 11, background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>{m.Slug}</code></TD>
-                    <TD><Badge variant="default">{m.Category}</Badge></TD>
-                    <TD><Badge variant={m.IsPremium ? 'premium' : 'free'}>{m.IsPremium ? '⭐ Premium' : 'Free'}</Badge></TD>
-                    <TD><Badge variant={m.IsActive ? 'active' : 'inactive'}>{m.IsActive ? 'Active' : 'Inactive'}</Badge></TD>
-                    <TD style={{ color: '#94a3b8' }}>{m.SortOrder}</TD>
-                    <TD>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <Btn size="sm" variant="ghost"   onClick={() => openEdit(m)}>Edit</Btn>
-                        <Btn size="sm" variant="danger"  onClick={() => setConfirm(m)}>Deactivate</Btn>
-                      </div>
-                    </TD>
-                  </TRow>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <THead cols={['Name', 'Slug', 'Category', 'Type', 'Status', 'Order', '']} />
+                <tbody>
+                  {visible.length === 0 ? (
+                    <tr><td colSpan={7}><EmptyState icon="📦" title="No modules" /></td></tr>
+                  ) : visible.map(m => (
+                    <TRow key={m.ModuleId}>
+                      <TD><span style={{ fontWeight: 600, color: '#1e293b' }}>{m.Name}</span></TD>
+                      <TD><code style={{ fontSize: 11, background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>{m.Slug}</code></TD>
+                      <TD><Badge variant="default">{m.Category}</Badge></TD>
+                      <TD><Badge variant={m.IsPremium ? 'premium' : 'free'}>{m.IsPremium ? '⭐ Premium' : 'Free'}</Badge></TD>
+                      <TD><Badge variant={m.IsActive ? 'active' : 'inactive'}>{m.IsActive ? 'Active' : 'Inactive'}</Badge></TD>
+                      <TD style={{ color: '#94a3b8' }}>{m.SortOrder}</TD>
+                      <TD>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Btn size="sm" variant="ghost"   onClick={() => openEdit(m)}>Edit</Btn>
+                          <Btn size="sm" variant="danger"  onClick={() => setConfirm(m)}>Deactivate</Btn>
+                        </div>
+                      </TD>
+                    </TRow>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={page} total={total} pageSize={PAGE_SIZE} onChange={setPage} />
+          </>
         )}
       </Card>
 

@@ -410,11 +410,85 @@ public class LinkedListInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "private static String _dsvpEsc(String s) {\n" +
             "    return s.replace(\"\\\\\",\"\\\\\\\\\").replace(\"\\\"\",\"\\\\\\\"\").replace(\"\\n\",\"\\\\n\");\n" +
             "}\n" +
+            "private static int _dsvpChainLen(Object start) {\n" +
+            "    if (start == null) return 0;\n" +
+            "    int n = 0;\n" +
+            "    Object cur = start;\n" +
+            "    java.util.Set<Object> seen = java.util.Collections.newSetFromMap(\n" +
+            "        new java.util.IdentityHashMap<>());\n" +
+            "    int limit = 256;\n" +
+            "    while (cur != null && !seen.contains(cur) && limit-- > 0) {\n" +
+            "        seen.add(cur);\n" +
+            "        n++;\n" +
+            "        cur = _dsvpGetField(cur, \"next\");\n" +
+            "    }\n" +
+            "    return n;\n" +
+            "}\n" +
+            "private static Object _dsvpStickyRoot = null;\n" +
+            // A node spliced out of a circular list keeps its own outgoing
+            // .next pointer (it still points somewhere INTO the live ring) —
+            // only the incoming pointer to it was removed. Walking forward
+            // from that dangling node therefore visits the ENTIRE live ring
+            // plus itself: one MORE distinct node than any real ring member
+            // can ever reach, so "longest chain wins" alone always promotes
+            // the deleted node back in as a fake, permanently-stuck head.
+            // A candidate is only a legitimate root if walking forward
+            // either runs out at null (a proper linear list) or returns to
+            // ITSELF (a true cycle) — a candidate whose walk instead lands
+            // on some OTHER already-visited node is a dangling leftover.
+            "private static boolean _dsvpIsValidRoot(Object start) {\n" +
+            "    if (start == null) return false;\n" +
+            "    Object cur = start;\n" +
+            "    java.util.Set<Object> seen = java.util.Collections.newSetFromMap(\n" +
+            "        new java.util.IdentityHashMap<>());\n" +
+            "    int limit = 256;\n" +
+            "    while (cur != null && limit-- > 0) {\n" +
+            "        if (seen.contains(cur)) return cur == start;\n" +
+            "        seen.add(cur);\n" +
+            "        cur = _dsvpGetField(cur, \"next\");\n" +
+            "    }\n" +
+            "    return true;\n" +
+            "}\n" +
             "private static void _dsvpTraceLL(Object head, Object active, String desc) {\n" +
-            "    if (head == null) return;\n" +
-            "    boolean isDoubly = _dsvpHasField(head, \"prev\",\"previous\",\"back\",\"left\",\"prv\");\n" +
+            "    if (head == null && active == null) return;\n" +
+            // In-place mutations (e.g. reversing a list by swapping next/prev
+            // on the CURRENT node) can leave the originally-passed `head`
+            // reference stale mid-operation — e.g. right after the first
+            // swap, the old head's own .next becomes null, so walking from
+            // it would collapse the whole visualization down to one node
+            // until the algorithm finishes and reassigns head at the end.
+            // Instead of trusting a single fixed reference, consider every
+            // node this program has EVER referenced (_dsvpNodeIds — already
+            // built up as nodes get walked/passed as `active`) as a
+            // candidate root, and walk forward from whichever one currently
+            // reaches the most nodes. That's always the reference
+            // structurally best-positioned to represent the live state,
+            // even in the middle of an in-place mutation.
+            "    Object bestRoot = _dsvpIsValidRoot(head) ? head : null;\n" +
+            "    int bestLen = (bestRoot != null) ? _dsvpChainLen(bestRoot) : -1;\n" +
+            // A circular list gives every legitimate ring node the SAME
+            // reach (chainLen stops at the first repeat), so plain "longest
+            // chain wins" can't tell the true head apart from whatever
+            // traversal pointer (e.g. `temp`) happens to get passed in this
+            // call — the crown would visibly drift around the ring as it
+            // walks. Prefer the previously anchored root on ties; only a
+            // candidate that STRICTLY beats it (a real structural change,
+            // like inserting a new node in front) is allowed to take over.
+            "    if (_dsvpStickyRoot != null && _dsvpIsValidRoot(_dsvpStickyRoot)) {\n" +
+            "        int stickyLen = _dsvpChainLen(_dsvpStickyRoot);\n" +
+            "        if (stickyLen >= bestLen) { bestLen = stickyLen; bestRoot = _dsvpStickyRoot; }\n" +
+            "    }\n" +
+            "    for (Object candidate : _dsvpNodeIds.keySet()) {\n" +
+            "        if (!_dsvpIsValidRoot(candidate)) continue;\n" +
+            "        int len = _dsvpChainLen(candidate);\n" +
+            "        if (len > bestLen) { bestLen = len; bestRoot = candidate; }\n" +
+            "    }\n" +
+            "    if (bestRoot == null) bestRoot = _dsvpIsValidRoot(active) ? active : head;\n" +
+            "    if (bestRoot == null) return;\n" +
+            "    _dsvpStickyRoot = bestRoot;\n" +
+            "    boolean isDoubly = _dsvpHasField(bestRoot, \"prev\",\"previous\",\"back\",\"left\",\"prv\");\n" +
             "    StringBuilder sb = new StringBuilder(\"[\");\n" +
-            "    Object cur = head;\n" +
+            "    Object cur = bestRoot;\n" +
             "    java.util.Set<Object> seen = java.util.Collections.newSetFromMap(\n" +
             "        new java.util.IdentityHashMap<>());\n" +
             "    boolean first = true, isHead = true;\n" +

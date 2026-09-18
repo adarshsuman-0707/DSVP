@@ -546,6 +546,7 @@ No changes to user code are required. Plain Python lists/vars work as-is.
 import sys
 import ast
 import json
+import re
 import traceback
 
 # ── Trace emitter ─────────────────────────────────────────────────────────────
@@ -568,6 +569,9 @@ def _next_step():
     return _STEP_COUNTER[0]
 
 
+_DEFAULT_REPR_RE = re.compile(r'^<(?:[\w]+\.)*(\w+) object at 0x[0-9A-Fa-f]+>$')
+
+
 def _safe_repr(val, depth=0):
     """Safe repr of a value for display — truncates long strings."""
     if depth > 1:
@@ -586,7 +590,15 @@ def _safe_repr(val, depth=0):
             return 'inf'
         if val == float('-inf'):
             return '-inf'
+    # Node-like objects (used by every LL variant, incl. circular) show as
+    # "Node(20)" rather than the default memory-address repr — the address
+    # is meaningless to a learner watching the Variables panel.
+    if _is_node_like(val) or _is_tree_node_like(val):
+        return f'Node({_safe_repr(_node_val(val), depth + 1)})' if val is not None else 'None'
     r = repr(val)
+    m = _DEFAULT_REPR_RE.match(r)
+    if m:
+        return f'{m.group(1)} instance'
     return r if len(r) <= 60 else r[:57] + '...'
 
 
@@ -607,9 +619,14 @@ def _get_locals(frame):
 
 
 def _write(payload):
+    # Trace events go to stderr, never stdout — user code's own print()
+    # output (often without trailing newlines, e.g. `print(v, end=" -> ")`)
+    # lives on stdout untouched. Mixing the two on one stream let a trace
+    # line get concatenated onto the tail of an unterminated user print,
+    # corrupting the displayed output with embedded DSVP_TRACE JSON.
     payload["step"] = _next_step()
-    sys.stdout.write("DSVP_TRACE:" + json.dumps(payload, default=str) + "\n")
-    sys.stdout.flush()
+    sys.stderr.write("DSVP_TRACE:" + json.dumps(payload, default=str) + "\n")
+    sys.stderr.flush()
 
 
 def _emit_call(func_name, depth, line_no, args_repr):
@@ -720,6 +737,29 @@ def _make_tracer(source_lines):
             except Exception:
                 pass
 
+            # ── BST node auto-detection & traversal ──────────────────────
+            # A tree node is classified by having 'left'/'right' attrs; we
+            # explicitly exclude anything already claimed by the LL detector
+            # (has '.next') so a pathological class with both never fires
+            # both subsystems at once.
+            try:
+                for v in frame.f_locals.values():
+                    if _is_tree_node_like(v) and not _is_node_like(v):
+                        if id(type(v)) not in _BST_PATCHED_CLASSES:
+                            _patch_tree_node_class(type(v))
+                            _BST_REGISTRY[id(v)] = v
+                            _emit_bst("bst_init", id(v), f"Created Node({_node_val(v)})", _BST_REGISTRY)
+                        else:
+                            _BST_REGISTRY[id(v)] = v
+
+                for k in changed:
+                    val = frame.f_locals.get(k)
+                    if _is_tree_node_like(val) and not _is_node_like(val):
+                        _BST_REGISTRY[id(val)] = val
+                        _emit_bst("bst_traverse", id(val), f"Traversing: {k} -> Node({_node_val(val)})", _BST_REGISTRY)
+            except Exception:
+                pass
+
         elif event == 'return':
             ret_repr = _safe_repr(arg) if arg is not None else 'None'
             locals_snap = _get_locals(frame)
@@ -754,6 +794,9 @@ class _DSVPArray:
         val = self._d[idx]
         if isinstance(idx, int) and not _DSVP_IN_COMPARE:
             _emit("read", idx, val, self._d)
+        if isinstance(idx, slice):
+            _emit("delete", len(val) - 1, None, val)
+            return _DSVPArray(val, _silent=True)
         return val
 
     # -- writes --
@@ -789,6 +832,44 @@ class _DSVPArray:
     def append(self, val):
         self._d.append(val)
         _emit("append", len(self._d) - 1, val, self._d)
+
+    def pop(self, idx=-1):
+        real_idx = idx if idx >= 0 else len(self._d) + idx
+        val = self._d.pop(idx)
+        _emit("delete", real_idx, val, self._d)
+        return val
+
+    def insert(self, idx, val):
+        self._d.insert(idx, val)
+        real_idx = idx if idx >= 0 else len(self._d) + idx - 1
+        _emit("write", real_idx, val, self._d)
+
+    def remove(self, val):
+        idx = self._d.index(val)
+        self._d.remove(val)
+        _emit("delete", idx, val, self._d)
+
+    def extend(self, vals):
+        for v in vals:
+            self.append(v)
+
+    def clear(self):
+        self._d.clear()
+        _emit("init", -1, None, self._d)
+
+    def __delitem__(self, idx):
+        if isinstance(idx, int):
+            val = self._d[idx]
+            del self._d[idx]
+            _emit("delete", idx if idx >= 0 else len(self._d) + idx, val, self._d)
+        else:
+            del self._d[idx]
+
+    def index(self, val):
+        return self._d.index(val)
+
+    def count(self, val):
+        return self._d.count(val)
 
     def sort(self, **kw):
         d = self._d
@@ -867,6 +948,16 @@ def Array(size_or_list, fill=0):
 
 _LL_REGISTRY = {}   # id(node) → node object  (ALL live nodes we've seen)
 _LL_HEADS    = {}   # id(node) → node object  (nodes with no known "prev" pointer)
+_LL_KNOWN_HEADS  = set()  # id(node) → previously confirmed as a head (sticky
+                           # across a circular list closing its own ring)
+_LL_LAST_REACHABLE = set()  # id(node) → was reachable from a head as of the
+                             # previous snapshot (used to tell a freshly
+                             # spliced-out node from a genuinely new head)
+_LL_TOMBSTONED = set()       # id(node) → permanently deleted; a later
+                             # unrelated attribute write on the same (now
+                             # dead) object re-adds it to the registry, so a
+                             # one-shot prune isn't enough — it must stay
+                             # excluded forever once orphaned.
 
 def _is_node_like(obj):
     """Heuristic: has a 'next' attribute and is a user-defined object."""
@@ -881,14 +972,18 @@ def _node_val(node):
     for attr in ('data', 'val', 'value', 'key', 'item'):
         if hasattr(node, attr):
             v = getattr(node, attr)
-            if not _is_node_like(v):
+            if not _is_node_like(v) and not _is_tree_node_like(v):
                 return v
     return '?'
 
 def _snapshot_chain(head, max_nodes=64):
     """
     Walk a linked list from head, return list of dicts:
-      [{"id": <int>, "val": <any>, "nextId": <int|null>, "isHead": <bool>}, ...]
+      [{"id": <int>, "val": <any>, "nextId": <int|null>, "prevId": <int|null>,
+        "isHead": <bool>}, ...]
+    prevId is read from the node's own 'prev' attribute when present (doubly
+    linked lists) — the frontend uses it to draw the PREV arrow, so a node
+    with a real back-pointer must not fall through as null.
     Stops after max_nodes to prevent infinite loops.
     """
     nodes = []
@@ -897,29 +992,99 @@ def _snapshot_chain(head, max_nodes=64):
     first = True
     while cur is not None and id(cur) not in seen and len(nodes) < max_nodes:
         seen.add(id(cur))
-        nxt   = getattr(cur, 'next', None)
-        # Handle doubly-linked list — skip if nxt is a prev-only ref
+        nxt  = getattr(cur, 'next', None)
+        prv  = getattr(cur, 'prev', None)
         nodes.append({
             "id":     id(cur),
             "val":    _node_val(cur),
             "nextId": id(nxt) if nxt is not None else None,
+            "prevId": id(prv) if prv is not None else None,
             "isHead": first,
         })
         first = False
         cur   = nxt
     return nodes
 
+def _chain_reaches(start, target_id, max_nodes=128):
+    """True if walking start.next.next... reaches a node with id == target_id."""
+    cur = start
+    seen = set()
+    steps = 0
+    while cur is not None and id(cur) not in seen and steps < max_nodes:
+        if id(cur) == target_id:
+            return True
+        seen.add(id(cur))
+        cur = getattr(cur, 'next', None)
+        steps += 1
+    return False
+
+
 def _find_heads(registry):
     """
     Nodes that are not pointed to by any other node's 'next' — likely heads.
-    Returns list of node objects.
+
+    Circular lists break the plain "nobody points at me" heuristic — once the
+    ring closes, the head IS pointed at (by the tail). We keep a node that was
+    already a confirmed head (_LL_KNOWN_HEADS) as head so long as whoever now
+    points at it is reachable by walking forward FROM it — i.e. the pointer
+    closes a loop back onto itself, rather than a genuinely different node
+    (e.g. an insert-at-front) taking over as the new head.
+
+    Staleness (spliced-out / deleted nodes) is decided by reachability, not
+    by "used to be pointed at" — a node that stops being pointed at because
+    a circular list mid-construction is still very much alive (it may be the
+    head itself, momentarily un-pointed while its own ring is being wired
+    up); only a node unreachable from every current head is truly orphaned.
+
+    A node that just went unpointed AND was reachable mid-chain as of the
+    previous snapshot (not itself a known head) has been spliced out, not
+    promoted to a new head — that distinguishes a real delete from a
+    genuinely new standalone/head node.
     """
-    pointed_at = set()
+    global _LL_LAST_REACHABLE
+    # A tombstoned node may have been silently re-added to the registry by
+    # an unrelated later attribute write on the same dead object — purge it
+    # before it can be reconsidered as a head.
+    for nid in _LL_TOMBSTONED:
+        registry.pop(nid, None)
+
+    pointed_at = {}   # id(node) -> id(node that points at it)
     for node in registry.values():
         nxt = getattr(node, 'next', None)
         if nxt is not None:
-            pointed_at.add(id(nxt))
-    return [n for nid, n in registry.items() if nid not in pointed_at]
+            pointed_at[id(nxt)] = id(node)
+
+    heads = []
+    for nid, n in registry.items():
+        if nid not in pointed_at:
+            if nid in _LL_LAST_REACHABLE and nid not in _LL_KNOWN_HEADS:
+                continue   # was mid-chain last snapshot — spliced out, not a new head
+            heads.append(n)
+        elif nid in _LL_KNOWN_HEADS and _chain_reaches(n, pointed_at[nid]):
+            heads.append(n)   # circular closure onto a known head — stays head
+
+    reachable = set()
+    for h in heads:
+        cur, steps = h, 0
+        while cur is not None and id(cur) not in reachable and steps < 128:
+            reachable.add(id(cur))
+            cur = getattr(cur, 'next', None)
+            steps += 1
+
+    head_ids = {id(h) for h in heads}
+    for nid in list(registry.keys()):
+        if nid not in reachable and nid not in head_ids:
+            registry.pop(nid, None)
+            _LL_KNOWN_HEADS.discard(nid)
+            _LL_TOMBSTONED.add(nid)
+
+    _LL_LAST_REACHABLE = reachable
+    _LL_KNOWN_HEADS.update(head_ids)
+    for nid in list(_LL_KNOWN_HEADS):
+        if nid in pointed_at and nid not in head_ids:
+            _LL_KNOWN_HEADS.discard(nid)   # demoted by a genuine new head
+
+    return heads
 
 def _emit_ll(op, active_id, desc, registry):
     """
@@ -981,6 +1146,177 @@ def _patch_node_class(cls):
 
     cls.__init__ = _dsvp_init
     cls.__setattr__ = _dsvp_setattr
+
+
+# ── BST node tracker ───────────────────────────────────────────────────────────
+# Same "sniff __setattr__" strategy as the linked-list tracker above, but a
+# tree node is identified by 'left'/'right' attributes rather than 'next',
+# and "root" is the one node reachable via left/right that nobody else
+# points at (instead of a chain head). Deleted nodes are pruned the same
+# way: reachability-from-root decides what's live, not "was pointed at
+# before" — a node briefly unpointed during a rebalance/rewire is not a
+# deletion, only a node unreachable from the current root truly is.
+
+_BST_REGISTRY = {}          # id(node) → node object (all live tree nodes seen)
+_BST_KNOWN_ROOTS = set()    # sticky root id, to avoid flicker between snapshots
+_BST_LAST_REACHABLE = set() # id(node) → reachable from root as of last snapshot
+_BST_TOMBSTONED = set()     # id(node) → permanently deleted, never reconsidered
+
+
+def _is_tree_node_like(obj):
+    """Heuristic: has a 'left' or 'right' attribute — a binary tree node."""
+    return ((hasattr(obj, 'left') or hasattr(obj, 'right')) and
+            not isinstance(obj, (str, bytes, bytearray, int, float, bool, type)))
+
+
+def _tree_reach_count(start, max_nodes=256):
+    """Count of nodes reachable from `start` via left/right (cycle-safe)."""
+    seen = set()
+    stack = [start]
+    while stack and len(seen) < max_nodes:
+        cur = stack.pop()
+        if cur is None or id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        stack.append(getattr(cur, 'left', None))
+        stack.append(getattr(cur, 'right', None))
+    return len(seen)
+
+
+def _snapshot_tree(root, max_nodes=256):
+    """
+    Walk a binary tree from root (DFS, cycle-safe), return list of dicts:
+      [{"id":<int>, "val":<any>, "leftId":<int|null>, "rightId":<int|null>,
+        "isRoot":<bool>}, ...]
+    """
+    nodes = []
+    seen = set()
+    stack = [(root, True)]
+    while stack and len(nodes) < max_nodes:
+        cur, is_root = stack.pop()
+        if cur is None or id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        left = getattr(cur, 'left', None)
+        right = getattr(cur, 'right', None)
+        nodes.append({
+            "id":      id(cur),
+            "val":     _node_val(cur),
+            "leftId":  id(left) if left is not None else None,
+            "rightId": id(right) if right is not None else None,
+            "isRoot":  is_root,
+        })
+        if right is not None:
+            stack.append((right, False))
+        if left is not None:
+            stack.append((left, False))
+    return nodes
+
+
+def _find_tree_root(registry):
+    """
+    Pick the live root of the tree in `registry`, pruning any node no longer
+    reachable from it (deleted nodes). Sticky: keeps the previously-known
+    root as root for as long as it remains a valid candidate (nobody points
+    at it), so an unrelated insert deep in the tree can't cause the root
+    marker to jump to some other node.
+    """
+    global _BST_LAST_REACHABLE
+
+    for nid in _BST_TOMBSTONED:
+        registry.pop(nid, None)
+
+    pointed_at = set()
+    for node in registry.values():
+        l = getattr(node, 'left', None)
+        r = getattr(node, 'right', None)
+        if l is not None:
+            pointed_at.add(id(l))
+        if r is not None:
+            pointed_at.add(id(r))
+
+    candidates = [n for nid, n in registry.items() if nid not in pointed_at]
+
+    root = None
+    for n in candidates:
+        if id(n) in _BST_KNOWN_ROOTS:
+            root = n
+            break
+    if root is None and candidates:
+        # No known root survived — pick whichever candidate reaches the most
+        # nodes (a tree shouldn't have cycles, so this is mainly a defensive
+        # tie-breaker for the very first snapshot or a full re-root).
+        root = max(candidates, key=_tree_reach_count)
+
+    reachable = set()
+    if root is not None:
+        stack = [root]
+        while stack:
+            cur = stack.pop()
+            if cur is None or id(cur) in reachable:
+                continue
+            reachable.add(id(cur))
+            stack.append(getattr(cur, 'left', None))
+            stack.append(getattr(cur, 'right', None))
+
+    for nid in list(registry.keys()):
+        if nid not in reachable:
+            registry.pop(nid, None)
+            _BST_KNOWN_ROOTS.discard(nid)
+            _BST_TOMBSTONED.add(nid)
+
+    _BST_LAST_REACHABLE = reachable
+    _BST_KNOWN_ROOTS.clear()
+    if root is not None:
+        _BST_KNOWN_ROOTS.add(id(root))
+
+    return root
+
+
+def _emit_bst(op, active_id, desc, registry):
+    root = _find_tree_root(registry)
+    nodes = _snapshot_tree(root) if root is not None else []
+    _write({
+        "op":       op,
+        "activeId": active_id,
+        "nodes":    nodes,
+        "desc":     desc,
+    })
+
+
+_BST_PATCHED_CLASSES = set()
+
+
+def _patch_tree_node_class(cls):
+    """Monkey-patch cls to cleanly trace tree-node creation and left/right mutations."""
+    if id(cls) in _BST_PATCHED_CLASSES:
+        return
+    _BST_PATCHED_CLASSES.add(id(cls))
+    original_init    = cls.__init__  if hasattr(cls, '__init__')    else None
+    original_setattr = cls.__setattr__ if hasattr(cls, '__setattr__') else object.__setattr__
+
+    def _dsvp_tree_init(self, *args, **kwargs):
+        object.__setattr__(self, '_dsvp_in_init', True)
+        try:
+            if original_init:
+                original_init(self, *args, **kwargs)
+        finally:
+            object.__setattr__(self, '_dsvp_in_init', False)
+        _BST_REGISTRY[id(self)] = self
+
+    def _dsvp_tree_setattr(self, name, value):
+        original_setattr(self, name, value)
+        _BST_REGISTRY[id(self)] = self
+        if getattr(self, '_dsvp_in_init', False):
+            return
+        if name in ('left', 'right'):
+            val_desc = f"Node({_node_val(value)})" if _is_tree_node_like(value) else ('None' if value is None else repr(value))
+            _emit_bst("bst_update", id(self), f"node.{name} = {val_desc}", _BST_REGISTRY)
+        elif name in ('data', 'val', 'value', 'key', 'item'):
+            _emit_bst("bst_update", id(self), f"node.{name} = {value!r}", _BST_REGISTRY)
+
+    cls.__init__ = _dsvp_tree_init
+    cls.__setattr__ = _dsvp_tree_setattr
 
 
 # ── AST transformer ───────────────────────────────────────────────────────────
@@ -1161,6 +1497,12 @@ def main():
         "_emit_ll":       _emit_ll,
         "_is_node_like":  _is_node_like,
         "_LL_PATCHED_CLASSES": _LL_PATCHED_CLASSES,
+        # BST helpers (auto-detection — no explicit import needed by user)
+        "_BST_REGISTRY":  _BST_REGISTRY,
+        "_patch_tree_node_class": _patch_tree_node_class,
+        "_emit_bst":      _emit_bst,
+        "_is_tree_node_like": _is_tree_node_like,
+        "_BST_PATCHED_CLASSES": _BST_PATCHED_CLASSES,
     }
 
     source_lines = source.splitlines()

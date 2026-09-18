@@ -168,23 +168,29 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
         String elem = ((ArrayType) vd.getType()).getComponentType().asString();
         vd.setType(dsvpType());
 
+        // Every DSVPArray instance is tagged with its own source variable
+        // name, so two separately-declared arrays (arr1, arr2, ...) each
+        // get their own identity in every trace event instead of
+        // collapsing into one "last touched" array in the visualizer.
+        String varName = vd.getNameAsString();
+
         vd.getInitializer().ifPresent(init -> {
             if (init instanceof ArrayInitializerExpr) {
                 ArrayCreationExpr inner = new ArrayCreationExpr();
                 inner.setElementType(primType(elem));
                 inner.setInitializer((ArrayInitializerExpr) init);
-                vd.setInitializer(wrap(inner));
+                vd.setInitializer(wrap(inner, varName));
             } else if (init instanceof ArrayCreationExpr) {
                 ArrayCreationExpr ace = (ArrayCreationExpr) init;
                 if (ace.getInitializer().isPresent()) {
-                    vd.setInitializer(wrap(ace));
+                    vd.setInitializer(wrap(ace, varName));
                 } else if (!ace.getLevels().isEmpty()
                         && ace.getLevels().get(0).getDimension().isPresent()) {
                     Expression size = ace.getLevels().get(0).getDimension().get();
                     vd.setInitializer(new ObjectCreationExpr(null, dsvpType(),
-                        new NodeList<>(size, new StringLiteralExpr(normalizeElem(elem)))));
+                        new NodeList<>(size, new StringLiteralExpr(normalizeElem(elem)), new StringLiteralExpr(varName))));
                 } else {
-                    vd.setInitializer(wrap(init));
+                    vd.setInitializer(wrap(init, varName));
                 }
             }
         });
@@ -231,19 +237,47 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
     }
 
     // 5) Writes: arr[i] = expr → arr.set(i, expr) — when active in scope
+    // Also handles compound assignment (+=, -=, *=, /=, %=): once arr
+    // becomes DSVPArray, `arr[i] += v` no longer compiles at all (you
+    // can't apply an operator to a method-backed wrapper), so every
+    // compound op on a tracked element must be rewritten too — to
+    // arr.addXxx(i, v) etc. (see RuntimeShim), which evaluates the index
+    // exactly once (as a normal method argument) regardless of whether it
+    // has side effects, and returns the new value like Java's own
+    // compound-assignment expressions do.
+    private static final java.util.Map<AssignExpr.Operator, String> COMPOUND_OPS = java.util.Map.of(
+        AssignExpr.Operator.PLUS,      "add",
+        AssignExpr.Operator.MINUS,     "sub",
+        AssignExpr.Operator.MULTIPLY,  "mul",
+        AssignExpr.Operator.DIVIDE,    "div",
+        AssignExpr.Operator.REMAINDER, "mod"
+    );
+
     @Override
     public void visit(AssignExpr n, Void arg) {
-        if (n.getTarget() instanceof ArrayAccessExpr
-                && n.getOperator() == AssignExpr.Operator.ASSIGN) {
+        if (n.getTarget() instanceof ArrayAccessExpr) {
             ArrayAccessExpr target = (ArrayAccessExpr) n.getTarget();
             if (target.getName() instanceof NameExpr) {
                 String varName = ((NameExpr) target.getName()).getNameAsString();
                 if (isActive(varName, n)) {
-                    target.getIndex().accept(this, arg);
-                    n.getValue().accept(this, arg);
-                    n.replace(new MethodCallExpr(target.getName().clone(), "set",
-                        new NodeList<>(target.getIndex().clone(), n.getValue().clone())));
-                    return;
+                    if (n.getOperator() == AssignExpr.Operator.ASSIGN) {
+                        target.getIndex().accept(this, arg);
+                        n.getValue().accept(this, arg);
+                        n.replace(new MethodCallExpr(target.getName().clone(), "set",
+                            new NodeList<>(target.getIndex().clone(), n.getValue().clone())));
+                        return;
+                    }
+                    String opPrefix = COMPOUND_OPS.get(n.getOperator());
+                    String suffix = suffixOf(varName, n);
+                    boolean isPlusOnString = n.getOperator() == AssignExpr.Operator.PLUS && suffix.equals("String");
+                    if (opPrefix != null || isPlusOnString) {
+                        String methodName = isPlusOnString ? "addString" : opPrefix + suffix;
+                        target.getIndex().accept(this, arg);
+                        n.getValue().accept(this, arg);
+                        n.replace(new MethodCallExpr(target.getName().clone(), methodName,
+                            new NodeList<>(target.getIndex().clone(), n.getValue().clone())));
+                        return;
+                    }
                 }
             }
         }
@@ -365,7 +399,7 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
         return new ClassOrInterfaceType(null, "DSVPArray");
     }
 
-    private ObjectCreationExpr wrap(Expression a) {
-        return new ObjectCreationExpr(null, dsvpType(), new NodeList<>(a));
+    private ObjectCreationExpr wrap(Expression a, String varName) {
+        return new ObjectCreationExpr(null, dsvpType(), new NodeList<>(a, new StringLiteralExpr(varName)));
     }
 }

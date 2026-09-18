@@ -319,16 +319,61 @@ async function deleteUser(req, res, next) {
    MODULES
    ═══════════════════════════════════════════════════════════════════════ */
 
-// GET /api/admin/modules
+// GET /api/admin/modules?page=1&pageSize=20&category=all&search=
 async function getModules(req, res, next) {
   try {
-    const pool   = await getPool();
-    const result = await pool.request().query(`
-      SELECT ModuleId, Name, Slug, Category, Description,
-             IsPremium, RequiredPlan, SortOrder, IsActive, CreatedAt
-      FROM dbo.Modules ORDER BY SortOrder, Name
-    `);
-    res.json({ modules: result.recordset });
+    const page     = Math.max(1,   parseInt(req.query.page, 10)     || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+    const category = (req.query.category || 'all').trim();
+    const search   = (req.query.search || '').trim();
+
+    const startRow = ((page - 1) * pageSize) + 1;
+    const endRow   = page * pageSize;
+
+    const pool = await getPool();
+
+    const dataRequest = pool.request()
+      .input('StartRow', sql.Int, startRow)
+      .input('EndRow',   sql.Int, endRow);
+    const countRequest = pool.request();
+
+    const conditions = [];
+    if (category !== 'all') {
+      dataRequest.input('Category', sql.VarChar(30), category);
+      countRequest.input('Category', sql.VarChar(30), category);
+      conditions.push('Category = @Category');
+    }
+    if (search) {
+      const pattern = `%${search}%`;
+      dataRequest.input('Search', sql.NVarChar(255), pattern);
+      countRequest.input('Search', sql.NVarChar(255), pattern);
+      conditions.push('(Name LIKE @Search OR Slug LIKE @Search)');
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const [rows, totalResult] = await Promise.all([
+      dataRequest.query(`
+        WITH ModuleData AS (
+          SELECT ModuleId, Name, Slug, Category, Description,
+                 IsPremium, RequiredPlan, SortOrder, IsActive, CreatedAt,
+                 ROW_NUMBER() OVER (ORDER BY SortOrder, Name) AS RowNum
+          FROM dbo.Modules
+          ${where}
+        )
+        SELECT ModuleId, Name, Slug, Category, Description,
+               IsPremium, RequiredPlan, SortOrder, IsActive, CreatedAt
+        FROM ModuleData
+        WHERE RowNum BETWEEN @StartRow AND @EndRow
+        ORDER BY RowNum
+      `),
+      countRequest.query(`SELECT COUNT(*) AS total FROM dbo.Modules ${where}`),
+    ]);
+
+    res.json({
+      modules: rows.recordset,
+      total:   totalResult.recordset[0].total,
+      page, pageSize,
+    });
   } catch (err) { next(err); }
 }
 
@@ -449,6 +494,21 @@ async function updateFeedbackStatus(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// PATCH /api/admin/feedback/:id/reply   body: { reply: string }
+async function replyToFeedback(req, res, next) {
+  try {
+    const { id }    = req.params;
+    const { reply } = req.body;
+    if (!reply || !reply.trim())
+      return res.status(400).json({ message: 'Reply message is required' });
+    if (reply.length > 2000)
+      return res.status(400).json({ message: 'Reply must be 2000 characters or less' });
+
+    await FeedbackModel.setReply(id, reply.trim());
+    res.json({ message: 'Reply sent' });
+  } catch (err) { next(err); }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    ANALYTICS EVENTS
    ═══════════════════════════════════════════════════════════════════════ */
@@ -495,11 +555,96 @@ async function getAnalytics(req, res, next) {
   } catch (err) { next(err); }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   USER ACTIVITY
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// GET /api/admin/activity?page=1&pageSize=20&type=all&search=
+async function getActivity(req, res, next) {
+  try {
+    const page     = Math.max(1,   parseInt(req.query.page, 10)     || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+    const type     = (req.query.type || 'all').trim();     // all | login | signup | code_run | payment
+    const search   = (req.query.search || '').trim();
+
+    const startRow = ((page - 1) * pageSize) + 1;
+    const endRow   = page * pageSize;
+
+    const pool = await getPool();
+
+    const dataRequest = pool.request()
+      .input('StartRow', sql.Int, startRow)
+      .input('EndRow',   sql.Int, endRow);
+    const countRequest = pool.request();
+
+    const typeCond = [];
+    if (type !== 'all') {
+      dataRequest.input('Type', sql.VarChar(20), type);
+      countRequest.input('Type', sql.VarChar(20), type);
+      typeCond.push('Type = @Type');
+    }
+    if (search) {
+      const pattern = `%${search}%`;
+      dataRequest.input('Search', sql.NVarChar(255), pattern);
+      countRequest.input('Search', sql.NVarChar(255), pattern);
+      typeCond.push('(FullName LIKE @Search OR Email LIKE @Search)');
+    }
+    const where = typeCond.length ? `WHERE ${typeCond.join(' AND ')}` : '';
+
+    const unionSql = `
+      SELECT ae.EventId AS ActivityId, ae.UserId, u.FullName, u.Email,
+             ae.EventType AS Type, ae.MetaJson AS Detail, ae.CreatedAt
+      FROM dbo.AnalyticsEvents ae
+      JOIN dbo.Users u ON u.UserId = ae.UserId
+
+      UNION ALL
+
+      SELECT et.TraceId, et.UserId, u.FullName, u.Email,
+             'code_run', CONCAT(et.Language, ' · ', et.Status), et.CreatedAt
+      FROM dbo.ExecutionTraces et
+      JOIN dbo.Users u ON u.UserId = et.UserId
+
+      UNION ALL
+
+      SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
+             'payment', CONCAT(p.PlanName, ' · ', p.Status, ' · ', p.Currency, ' ', p.Amount), p.CreatedAt
+      FROM dbo.Payments p
+      JOIN dbo.Users u ON u.UserId = p.UserId
+    `;
+
+    const [rows, totalResult] = await Promise.all([
+      dataRequest.query(`
+        WITH ActivityData AS (${unionSql}),
+        Filtered AS (
+          SELECT *, ROW_NUMBER() OVER (ORDER BY CreatedAt DESC) AS RowNum
+          FROM ActivityData
+          ${where}
+        )
+        SELECT ActivityId, UserId, FullName, Email, Type, Detail, CreatedAt
+        FROM Filtered
+        WHERE RowNum BETWEEN @StartRow AND @EndRow
+        ORDER BY RowNum
+      `),
+      countRequest.query(`
+        WITH ActivityData AS (${unionSql})
+        SELECT COUNT(*) AS total FROM ActivityData ${where}
+      `),
+    ]);
+
+    res.json({
+      activity: rows.recordset,
+      total:    totalResult.recordset[0].total,
+      page, pageSize,
+    });
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   getDashboard,
   getUsers, updateUserRole, updateUserPremium, updateUserSubscription, deleteUser,
   getModules, createModule, updateModule, deleteModule,
   getPayments,
-  getFeedback, updateFeedbackStatus,
+  getFeedback, updateFeedbackStatus, replyToFeedback,
   getAnalytics,
+  getActivity,
 };

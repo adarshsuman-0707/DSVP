@@ -16,6 +16,7 @@ export default function ArrayVisualizer({
   step         = 0,
   totalSteps   = 0,
   userOutput   = '',
+  name         = null, // optional: variable name, shown when multiple arrays coexist
 }) {
   const [flashSet, setFlashSet]           = useState(new Set());
   const [viewMode, setViewMode]           = useState('bars'); // 'bars' | 'cells'
@@ -76,6 +77,14 @@ export default function ArrayVisualizer({
             fontSize: 11, fontWeight: 700, color: '#8b949e',
             textTransform: 'uppercase', letterSpacing: '.06em',
           }}>Array</span>
+          {name && (
+            <span style={{
+              padding: '2px 8px', borderRadius: 999,
+              background: 'rgba(168,85,247,.18)', color: '#c4b5fd',
+              fontSize: 11, fontWeight: 700,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}>{name}</span>
+          )}
           {arrayState.length > 0 && (
             <span style={{
               padding: '2px 8px', borderRadius: 999,

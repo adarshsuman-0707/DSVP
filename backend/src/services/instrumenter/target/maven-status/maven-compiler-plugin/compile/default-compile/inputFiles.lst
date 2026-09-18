@@ -1,5 +1,11 @@
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\StackFieldInstrumentVisitor.java
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\BSTInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\JavaInstrumenter.java
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\StackInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\RuntimeShim.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\ArrayInstrumentVisitor.java
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\QueueFieldInstrumentVisitor.java
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\QueueInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\CallTraceInstrumentVisitor.java
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\Array2DInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\LinkedListInstrumentVisitor.java

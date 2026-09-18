@@ -32,7 +32,7 @@ export const getModules = (filter = 'all') => api.get(`/modules?filter=${filter}
 export const getModuleBySlug = (slug) => api.get(`/modules/${slug}`);
 
 // -------- Execution --------
-export const runCode = (payload) => api.post('/execution/run', payload);
+export const runCode = (payload, config = {}) => api.post('/execution/run', payload, config);
 
 // -------- Payments --------
 export const createPaymentOrder = (payload) => api.post('/payments/create-order', payload);
@@ -40,6 +40,9 @@ export const verifyPayment = (payload) => api.post('/payments/verify', payload);
 
 // -------- User Feedback --------
 export const submitFeedback = (payload) => api.post('/users/feedback', payload);
+export const getMyFeedback = () => api.get('/users/feedback');
+export const getMyFeedbackUnseenCount = () => api.get('/users/feedback/unseen-count');
+export const markFeedbackSeen = (id) => api.patch(`/users/feedback/${id}/seen`);
 
 // -------- Profile --------
 export const updateProfile  = (payload) => api.patch('/users/profile', payload);
@@ -64,7 +67,7 @@ export const updateUserSubscription = (id, plan, moduleAccess) =>
 export const deleteAdminUser    = (id)          => api.delete(`/admin/users/${id}`);
 
 // -------- Admin — Modules --------
-export const getAdminModules    = ()            => api.get('/admin/modules');
+export const getAdminModules    = (p = {})      => api.get('/admin/modules', { params: p });
 export const createAdminModule  = (data)        => api.post('/admin/modules',      data);
 export const updateAdminModule  = (id, data)    => api.put(`/admin/modules/${id}`, data);
 export const deleteAdminModule  = (id)          => api.delete(`/admin/modules/${id}`);
@@ -74,6 +77,10 @@ export const getAdminPayments   = (p = {})      => api.get('/admin/payments',  {
 
 // -------- Admin — Feedback --------
 export const getAdminFeedback   = (p = {})      => api.get('/admin/feedback',  { params: p });
+
+// -------- Admin — Activity --------
+export const getAdminActivity   = (p = {})      => api.get('/admin/activity',  { params: p });
 export const updateFeedbackStatus = (id, status)=> api.patch(`/admin/feedback/${id}/status`, { status });
+export const replyToFeedback    = (id, reply)   => api.patch(`/admin/feedback/${id}/reply`, { reply });
 
 export default api;

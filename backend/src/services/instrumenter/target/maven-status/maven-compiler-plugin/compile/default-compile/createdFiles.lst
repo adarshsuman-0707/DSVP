@@ -1,5 +1,5 @@
-dsvp\CallTraceInstrumentVisitor.class
-dsvp\ArrayInstrumentVisitor.class
 dsvp\RuntimeShim.class
 dsvp\JavaInstrumenter.class
 dsvp\LinkedListInstrumentVisitor.class
+dsvp\CallTraceInstrumentVisitor.class
+dsvp\ArrayInstrumentVisitor.class

@@ -5,6 +5,7 @@ import UsersTab     from './tabs/UsersTab';
 import ModulesTab   from './tabs/ModulesTab';
 import PaymentsTab  from './tabs/PaymentsTab';
 import FeedbackTab  from './tabs/FeedbackTab';
+import ActivityTab  from './tabs/ActivityTab';
 
 const TABS = [
   { id: 'overview',  label: 'Overview',  icon: '⊞' },
@@ -12,6 +13,7 @@ const TABS = [
   { id: 'modules',   label: 'Modules',   icon: '📦' },
   { id: 'payments',  label: 'Payments',  icon: '💰' },
   { id: 'feedback',  label: 'Feedback',  icon: '💬' },
+  { id: 'activity',  label: 'Activity',  icon: '📊' },
 ];
 
 export default function AdminDashboard() {
@@ -50,6 +52,7 @@ export default function AdminDashboard() {
           {active === 'modules'   && <ModulesTab />}
           {active === 'payments'  && <PaymentsTab />}
           {active === 'feedback'  && <FeedbackTab />}
+          {active === 'activity'  && <ActivityTab />}
         </div>
       </div>
     </AppShell>

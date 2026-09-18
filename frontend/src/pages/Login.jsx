@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { forgotSendOtp, forgotVerifyOtp, forgotResetPass } from '../services/api';
+import { useGsapContext, gsap } from '../hooks/useGsap';
+import FloatingIcons from '../components/common/FloatingIcons';
 
 /* ─────────────────────────────────────────────────────────
    MAIN LOGIN PAGE
@@ -12,58 +14,123 @@ import { forgotSendOtp, forgotVerifyOtp, forgotResetPass } from '../services/api
 export default function Login() {
   const [mode, setMode] = useState('login'); // 'login' | 'forgot'
 
+  useGsapContext(() => {
+    gsap.timeline({ defaults: { ease: 'power3.out' } })
+      .from('.auth-logo', { y: -16, opacity: 0, duration: 0.5 })
+      .from('.auth-card', { y: 28, opacity: 0, scale: 0.97, duration: 0.65 }, '-=0.2')
+      .from('.auth-back', { opacity: 0, duration: 0.4 }, '-=0.2')
+      .from('.auth-right > *', { x: 24, opacity: 0, duration: 0.6, stagger: 0.08 }, '-=0.5');
+  }, []);
+
   return (
-    <div style={{
-      minHeight: '100vh', display: 'flex',
+    <div className="auth-shell" style={{
+      minHeight: '100vh', display: 'flex', position: 'relative', overflow: 'hidden',
       background: 'linear-gradient(135deg, #0f2942 0%, #1F4E79 50%, #163a5e 100%)',
       fontFamily: "'Inter', system-ui, sans-serif",
     }}>
+      {/* subtle static dot texture — no movement, keeps focus on the card's animated border */}
+      <div aria-hidden style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        backgroundImage: 'radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px)',
+        backgroundSize: '26px 26px',
+        maskImage: 'radial-gradient(ellipse 70% 60% at 50% 40%, #000 40%, transparent 100%)',
+        WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 40%, #000 40%, transparent 100%)',
+      }} />
+      <FloatingIcons />
+
       {/* left panel */}
-      <div style={{
+      <div className="auth-left" style={{
         flex: 1, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '40px 5%',
+        padding: '32px 5%', position: 'relative', zIndex: 1, minWidth: 0,
       }}>
         {/* logo */}
-        <Link to="/" style={{
+        <Link to="/" className="auth-logo" style={{
           display: 'flex', alignItems: 'center', gap: 10,
-          textDecoration: 'none', marginBottom: 48,
+          textDecoration: 'none', marginBottom: 36,
         }}>
           <div style={{
             width: 38, height: 38, borderRadius: 10,
             background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 18, fontWeight: 800, color: '#fff',
+            fontSize: 18, fontWeight: 800, color: '#fff', flexShrink: 0,
           }}>D</div>
           <span style={{ fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-.02em' }}>DSVP</span>
         </Link>
 
-        {/* card */}
-        <div style={{
-          width: '100%', maxWidth: 420,
-          background: '#fff', borderRadius: 20,
-          padding: '40px',
-          boxShadow: '0 24px 60px rgba(0,0,0,.25)',
-        }}>
-          {mode === 'login'
-            ? <LoginForm onForgot={() => setMode('forgot')} />
-            : <ForgotFlow onBack={() => setMode('login')} />
-          }
+        {/* card — moving gradient border directly on the card itself + cursor spotlight */}
+        <div
+          className="auth-card gradient-border-move"
+          onMouseMove={e => {
+            const r = e.currentTarget.getBoundingClientRect();
+            e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`);
+            e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`);
+          }}
+          style={{
+            position: 'relative', width: '100%', maxWidth: 420,
+            borderRadius: 20, padding: '40px', overflow: 'hidden',
+            boxShadow: '0 24px 60px rgba(0,0,0,.35)',
+          }}
+        >
+          {/* cursor spotlight */}
+          <div aria-hidden style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0.5, zIndex: 1,
+            background: 'radial-gradient(220px circle at var(--mx,50%) var(--my,0%), rgba(46,116,181,.08), transparent 70%)',
+          }} />
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            {mode === 'login'
+              ? <LoginForm onForgot={() => setMode('forgot')} />
+              : <ForgotFlow onBack={() => setMode('login')} />
+            }
+          </div>
         </div>
 
-        <Link to="/" style={{ marginTop: 24, fontSize: 13, color: 'rgba(255,255,255,.5)', textDecoration: 'none' }}>
+        <Link to="/" className="auth-back" style={{ marginTop: 22, fontSize: 13, color: 'rgba(255,255,255,.5)', textDecoration: 'none' }}>
           ← Back to home
         </Link>
       </div>
 
-      {/* right decorative panel */}
-      <div style={{
+      {/* right decorative panel — hidden on tablet/mobile to keep the form the focus */}
+      <div className="auth-right" style={{
         flex: 1, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', padding: '40px 5%',
-        maxWidth: 520,
+        maxWidth: 520, position: 'relative', zIndex: 1,
       }}>
         <RightPanel />
       </div>
+
+      <style>{`
+        /* animated moving-gradient border directly on the card div (border-box + padding-box trick) */
+        .gradient-border-move {
+          border: 4px solid transparent;
+          background:
+            linear-gradient(#fff, #fff) padding-box,
+            linear-gradient(90deg, #1d4ed8, #15803d, #6d28d9, #1d4ed8) border-box;
+          background-size: 100% 100%, 300% 100%;
+          animation: gradientBorderMove 5s linear infinite;
+        }
+        @keyframes gradientBorderMove {
+          to { background-position: 0 0, -300% 0; }
+        }
+
+        @media (max-width: 980px) {
+          .auth-shell { flex-direction: column !important; }
+          .auth-right { display: none !important; }
+          .auth-left { flex: 1 1 auto !important; width: 100% !important; max-width: 100% !important; min-height: 100vh; }
+        }
+        @media (max-width: 480px) {
+          .auth-left { padding: 24px 5% !important; }
+          .auth-card { padding: 28px 22px !important; }
+          .auth-logo { margin-bottom: 26px !important; }
+          .auth-logo span { font-size: 18px !important; }
+        }
+        @media (max-width: 360px) {
+          .auth-card { padding: 22px 16px !important; }
+        }
+        @media (max-width: 380px) {
+          .otp-box { width: 38px !important; height: 46px !important; font-size: 18px !important; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -376,6 +443,7 @@ function ForgotFlow({ onBack }) {
                   onChange={e => handleOtpChange(i, e.target.value)}
                   onKeyDown={e => handleOtpKeyDown(i, e)}
                   onPaste={i === 0 ? handleOtpPaste : undefined}
+                  className="otp-box"
                   style={{
                     width: 46, height: 52, textAlign: 'center',
                     fontSize: 22, fontWeight: 700, color: '#1e293b',
@@ -582,28 +650,37 @@ function RightPanel() {
   return (
     <div style={{ maxWidth: 380, width: '100%' }}>
       <div style={{
-        background: 'rgba(255,255,255,.06)',
-        border: '1px solid rgba(255,255,255,.12)',
+        background: 'linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03))',
+        border: '1px solid rgba(255,255,255,.14)',
         borderRadius: 20, padding: '36px 32px',
-        backdropFilter: 'blur(10px)',
+        backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+        boxShadow: '0 20px 50px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.08)',
       }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>🎯</div>
-        <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 14, marginBottom: 18,
+          background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 26, boxShadow: '0 8px 22px rgba(46,116,181,.4)',
+        }}>🎯</div>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10, letterSpacing: '-.01em' }}>
           Visualize algorithms as they run
         </h2>
         <p style={{ fontSize: 14, color: 'rgba(255,255,255,.65)', lineHeight: 1.7, marginBottom: 28 }}>
           DSVP turns your code into live, step-by-step animations.
           See every pointer, every value, every state change.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {bullets.map(b => (
             <div key={b.text} style={{
               display: 'flex', alignItems: 'center', gap: 12,
-              background: 'rgba(255,255,255,.06)', borderRadius: 10,
-              padding: '10px 14px',
-            }}>
+              background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.08)',
+              borderRadius: 11, padding: '11px 14px', transition: 'background 150ms, border-color 150ms',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.18)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.08)'; }}
+            >
               <span style={{ fontSize: 18 }}>{b.icon}</span>
-              <span style={{ fontSize: 14, color: 'rgba(255,255,255,.8)', fontWeight: 500 }}>{b.text}</span>
+              <span style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', fontWeight: 500 }}>{b.text}</span>
             </div>
           ))}
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import CodeEditor from '../components/Editor/CodeEditor';
 import VisualizationCanvas from '../components/Visualization/VisualizationCanvas';
@@ -6,10 +6,31 @@ import PlaybackBar from '../components/PlaybackBar/PlaybackBar';
 import { runCode, getModules } from '../services/api';
 import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory } from '../services/api';
 import { Modal, FormField, Input, Btn } from '../components/AdminDashboard/ui';
-import { useAuth } from '../context/AuthContext';
 
 const LANGUAGES = ['python', 'cpp', 'java', 'c', 'csharp'];
 const LANG_LABELS = { python: 'Python', cpp: 'C++', java: 'Java', c: 'C', csharp: 'C#' };
+
+/* ── Workspace chrome theme (editor/panels/toolbar) ──────────────────────
+ * The visualization canvas (StackVisualizer/ArrayVisualizer/etc.) stays
+ * dark regardless — it's rendered as a dedicated "screen", the same way
+ * an embedded terminal or minimap stays dark in most light-themed IDEs.
+ * This toggle covers the surrounding chrome: toolbar, editor, side panels. */
+const THEME = {
+  dark: {
+    page: '#0d1117', header: '#161b22', panel: '#161b22', panelAlt: '#0d1117',
+    border: 'rgba(255,255,255,.08)', borderSoft: 'rgba(255,255,255,.06)',
+    text: '#e6edf3', textMuted: '#8b949e',
+    selectBg: '#21262d', selectBorder: 'rgba(255,255,255,.1)',
+    monaco: 'vs-dark',
+  },
+  light: {
+    page: '#f6f8fa', header: '#ffffff', panel: '#ffffff', panelAlt: '#f6f8fa',
+    border: '#d0d7de', borderSoft: '#e2e8f0',
+    text: '#1e293b', textMuted: '#64748b',
+    selectBg: '#ffffff', selectBorder: '#d0d7de',
+    monaco: 'light',
+  },
+};
 
 /* ── Starter code: STARTER[moduleSlug][language] ── */
 const STARTER = {
@@ -76,6 +97,101 @@ class Main {
             if (arr[i] > max) max = arr[i];
         }
         Console.WriteLine("Max: " + max);
+    }
+}
+`,
+  },
+
+  '2d-array': {
+    python: `# 2D Array (Matrix) — visualization demo
+# NOTE: live cell-by-cell animation currently only runs for Java;
+# Python still executes correctly, just without the grid animation yet.
+rows, cols = 3, 3
+grid = [[0] * cols for _ in range(rows)]
+
+val = 1
+for i in range(rows):
+    for j in range(cols):
+        grid[i][j] = val
+        val += 1
+
+row_sums = [sum(row) for row in grid]
+print("Row sums:", row_sums)
+`,
+    java: `public class Main {
+    public static void main(String[] args) {
+        int[][] grid = new int[3][3];
+
+        int val = 1;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                grid[i][j] = val++;
+            }
+        }
+
+        int total = 0;
+        for (int i = 0; i < grid.length; i++) {
+            for (int j = 0; j < 3; j++) {
+                total += grid[i][j];
+            }
+        }
+        System.out.println("Total: " + total);
+    }
+}
+`,
+    cpp: `#include <iostream>
+using namespace std;
+
+int main() {
+    int grid[3][3];
+    int val = 1;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            grid[i][j] = val++;
+
+    int total = 0;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            total += grid[i][j];
+
+    cout << "Total: " << total << endl;
+    return 0;
+}
+`,
+    c: `#include <stdio.h>
+
+int main() {
+    int grid[3][3];
+    int val = 1;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            grid[i][j] = val++;
+
+    int total = 0;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            total += grid[i][j];
+
+    printf("Total: %d\\n", total);
+    return 0;
+}
+`,
+    csharp: `using System;
+
+class Main {
+    static void Main(string[] args) {
+        int[,] grid = new int[3, 3];
+        int val = 1;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                grid[i, j] = val++;
+
+        int total = 0;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                total += grid[i, j];
+
+        Console.WriteLine("Total: " + total);
     }
 }
 `,
@@ -199,13 +315,589 @@ class Main {
 }
 `,
   },
+
+  'bst': {
+    python: `# Binary Search Tree — DSVP auto-detects your tree Node class!
+# Just use plain left/right pointers — no special API needed.
+
+class Node:
+    def __init__(self, val):
+        self.val = val
+        self.left = None
+        self.right = None
+
+def insert(root, val):
+    if root is None:
+        return Node(val)
+    if val < root.val:
+        root.left = insert(root.left, val)
+    else:
+        root.right = insert(root.right, val)
+    return root
+
+def search(root, val):
+    cur = root
+    while cur is not None:
+        if cur.val == val:
+            return True
+        cur = cur.left if val < cur.val else cur.right
+    return False
+
+def inorder(root, out):
+    if root is None:
+        return
+    inorder(root.left, out)
+    out.append(root.val)
+    inorder(root.right, out)
+
+root = None
+for v in [50, 30, 70, 20, 40, 60, 80]:
+    root = insert(root, v)
+
+print("Found 60:", search(root, 60))
+print("Found 99:", search(root, 99))
+
+result = []
+inorder(root, result)
+print("Inorder traversal:", result)
+`,
+    java: `public class Main {
+
+    static class TreeNode {
+        int val;
+        TreeNode left;
+        TreeNode right;
+        TreeNode(int val) { this.val = val; }
+    }
+
+    static TreeNode insert(TreeNode root, int val) {
+        if (root == null) {
+            return new TreeNode(val);
+        }
+        if (val < root.val) {
+            root.left = insert(root.left, val);
+        } else {
+            root.right = insert(root.right, val);
+        }
+        return root;
+    }
+
+    static boolean search(TreeNode root, int val) {
+        TreeNode cur = root;
+        while (cur != null) {
+            if (cur.val == val) return true;
+            cur = val < cur.val ? cur.left : cur.right;
+        }
+        return false;
+    }
+
+    public static void main(String[] args) {
+        TreeNode root = null;
+        int[] values = {50, 30, 70, 20, 40, 60, 80};
+        for (int v : values) {
+            root = insert(root, v);
+        }
+
+        System.out.println("Found 60: " + search(root, 60));
+        System.out.println("Found 99: " + search(root, 99));
+    }
+}
+`,
+  },
+
+  'circular-linked-list': {
+    python: `# Circular Linked List — DSVP auto-detects your Node class!
+# The last node's "next" wraps back to head, forming a ring.
+
+class Node:
+    def __init__(self, data):
+        self.data = data
+        self.next = None
+
+class CircularLinkedList:
+    def __init__(self):
+        self.head = None
+
+    def insert(self, data):
+        new_node = Node(data)
+        if not self.head:
+            self.head = new_node
+            new_node.next = self.head   # points to itself
+            return
+        temp = self.head
+        while temp.next != self.head:
+            temp = temp.next
+        temp.next = new_node
+        new_node.next = self.head
+
+    def display(self):
+        if not self.head:
+            return
+        temp = self.head
+        while True:
+            print(temp.data, end=" -> ")
+            temp = temp.next
+            if temp == self.head:
+                break
+        print("(back to head)")
+
+cll = CircularLinkedList()
+cll.insert(10)
+cll.insert(20)
+cll.insert(30)
+cll.display()
+`,
+    java: `public class Main {
+
+    static class Node {
+        int data;
+        Node next;
+        Node(int data) { this.data = data; this.next = null; }
+    }
+
+    static Node head = null;
+
+    static void insert(int data) {
+        Node newNode = new Node(data);
+        if (head == null) {
+            head = newNode;
+            newNode.next = head;   // points to itself
+            return;
+        }
+        Node temp = head;
+        while (temp.next != head) {
+            temp = temp.next;
+        }
+        temp.next = newNode;
+        newNode.next = head;
+    }
+
+    static void display() {
+        if (head == null) return;
+        Node temp = head;
+        while (true) {
+            System.out.print(temp.data + " -> ");
+            temp = temp.next;
+            if (temp == head) break;
+        }
+        System.out.println("(back to head)");
+    }
+
+    public static void main(String[] args) {
+        insert(10);
+        insert(20);
+        insert(30);
+        display();
+    }
+}
+`,
+    cpp: `#include <iostream>
+using namespace std;
+
+struct Node {
+    int data;
+    Node* next;
+    Node(int d) : data(d), next(nullptr) {}
+};
+
+Node* head = nullptr;
+
+void insert(int data) {
+    Node* newNode = new Node(data);
+    if (!head) {
+        head = newNode;
+        newNode->next = head;
+        return;
+    }
+    Node* temp = head;
+    while (temp->next != head) temp = temp->next;
+    temp->next = newNode;
+    newNode->next = head;
+}
+
+void display() {
+    if (!head) return;
+    Node* temp = head;
+    do {
+        cout << temp->data << " -> ";
+        temp = temp->next;
+    } while (temp != head);
+    cout << "(back to head)" << endl;
+}
+
+int main() {
+    insert(10);
+    insert(20);
+    insert(30);
+    display();
+    return 0;
+}
+`,
+    c: `#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node* next;
+} Node;
+
+Node* head = NULL;
+
+void insert(int data) {
+    Node* newNode = (Node*)malloc(sizeof(Node));
+    newNode->data = data;
+    if (!head) {
+        head = newNode;
+        newNode->next = head;
+        return;
+    }
+    Node* temp = head;
+    while (temp->next != head) temp = temp->next;
+    temp->next = newNode;
+    newNode->next = head;
+}
+
+void display() {
+    if (!head) return;
+    Node* temp = head;
+    do {
+        printf("%d -> ", temp->data);
+        temp = temp->next;
+    } while (temp != head);
+    printf("(back to head)\\n");
+}
+
+int main() {
+    insert(10);
+    insert(20);
+    insert(30);
+    display();
+    return 0;
+}
+`,
+    csharp: `using System;
+
+class Main {
+    class Node {
+        public int data;
+        public Node next;
+        public Node(int d) { data = d; next = null; }
+    }
+
+    static Node head = null;
+
+    static void Insert(int data) {
+        Node newNode = new Node(data);
+        if (head == null) {
+            head = newNode;
+            newNode.next = head;
+            return;
+        }
+        Node temp = head;
+        while (temp.next != head) temp = temp.next;
+        temp.next = newNode;
+        newNode.next = head;
+    }
+
+    static void Display() {
+        if (head == null) return;
+        Node temp = head;
+        do {
+            Console.Write(temp.data + " -> ");
+            temp = temp.next;
+        } while (temp != head);
+        Console.WriteLine("(back to head)");
+    }
+
+    static void Main(string[] args) {
+        Insert(10);
+        Insert(20);
+        Insert(30);
+        Display();
+    }
+}
+`,
+  },
+
+  'stack': {
+    python: `# Stack — LIFO visualization
+# Use a plain list — DSVP traces every push and peek automatically
+
+stack = []
+
+# Push elements
+stack.append(10)
+stack.append(25)
+stack.append(42)
+stack.append(99)
+
+# Peek top element
+top_val = stack[len(stack) - 1]
+print("Top:", top_val)
+
+# Pop — read top, then shrink
+popped = stack[len(stack) - 1]
+stack = stack[:len(stack) - 1]
+print("Popped:", popped)
+print("Remaining size:", len(stack))
+`,
+    java: `import java.util.Stack;
+
+public class Main {
+    public static void main(String[] args) {
+        Stack<Integer> stack = new Stack<>();
+
+        // Push elements
+        stack.push(10);
+        stack.push(25);
+        stack.push(42);
+        stack.push(99);
+
+        // Peek top element
+        int top = stack.peek();
+        System.out.println("Top element: " + top);
+
+        // Pop element
+        int popped = stack.pop();
+        System.out.println("Popped element: " + popped);
+
+        System.out.println("Remaining size: " + stack.size());
+    }
+}
+`,
+    cpp: `#include <iostream>
+#include <vector>
+using namespace std;
+
+int main() {
+    vector<int> stack;
+
+    // Push elements (LIFO)
+    stack.push_back(10);
+    stack.push_back(25);
+    stack.push_back(42);
+    stack.push_back(99);
+
+    // Peek top element
+    int top = stack.back();
+    cout << "Top element: " << top << endl;
+
+    // Pop element
+    stack.pop_back();
+    cout << "Remaining size: " << stack.size() << endl;
+
+    return 0;
+}
+`,
+    c: `#include <stdio.h>
+
+#define MAX 10
+int stack[MAX];
+int top = -1;
+
+void push(int val) {
+    if (top < MAX - 1) {
+        stack[++top] = val;
+        printf("Pushed: %d\\n", val);
+    }
+}
+
+int pop() {
+    if (top >= 0) {
+        return stack[top--];
+    }
+    return -1;
+}
+
+int peek() {
+    if (top >= 0) return stack[top];
+    return -1;
+}
+
+int main() {
+    push(10);
+    push(25);
+    push(42);
+    push(99);
+
+    printf("Top element: %d\\n", peek());
+    printf("Popped: %d\\n", pop());
+    return 0;
+}
+`,
+    csharp: `using System;
+using System.Collections.Generic;
+
+class Main {
+    static void Main(string[] args) {
+        Stack<int> stack = new Stack<int>();
+
+        // Push elements
+        stack.Push(10);
+        stack.Push(25);
+        stack.Push(42);
+        stack.Push(99);
+
+        // Peek top element
+        int top = stack.Peek();
+        Console.WriteLine("Top element: " + top);
+
+        // Pop element
+        int popped = stack.Pop();
+        Console.WriteLine("Popped element: " + popped);
+
+        Console.WriteLine("Remaining count: " + stack.Count);
+    }
+}
+`,
+  },
+
+  'queue': {
+    python: `# Queue — FIFO visualization
+# Use a plain list — DSVP traces every enqueue and dequeue automatically
+
+queue = []
+
+# Enqueue elements (added at the rear)
+queue.append(10)
+queue.append(25)
+queue.append(42)
+queue.append(99)
+
+# Peek front element
+front_val = queue[0]
+print("Front:", front_val)
+
+# Dequeue — removes and returns the front element
+dequeued = queue.pop(0)
+print("Dequeued:", dequeued)
+print("Remaining size:", len(queue))
+`,
+    java: `import java.util.Queue;
+import java.util.LinkedList;
+
+public class Main {
+    public static void main(String[] args) {
+        Queue<Integer> queue = new LinkedList<>();
+
+        // Enqueue elements (added at the rear)
+        queue.offer(10);
+        queue.offer(25);
+        queue.offer(42);
+        queue.offer(99);
+
+        // Peek front element
+        int front = queue.peek();
+        System.out.println("Front element: " + front);
+
+        // Dequeue element
+        int dequeued = queue.poll();
+        System.out.println("Dequeued element: " + dequeued);
+
+        System.out.println("Remaining size: " + queue.size());
+    }
+}
+`,
+    cpp: `#include <iostream>
+#include <queue>
+using namespace std;
+
+int main() {
+    queue<int> q;
+
+    // Enqueue elements (added at the rear)
+    q.push(10);
+    q.push(25);
+    q.push(42);
+    q.push(99);
+
+    // Peek front element
+    int front = q.front();
+    cout << "Front element: " << front << endl;
+
+    // Dequeue element
+    q.pop();
+    cout << "Remaining size: " << q.size() << endl;
+
+    return 0;
+}
+`,
+    c: `#include <stdio.h>
+
+#define MAX 10
+int queue[MAX];
+int frontIdx = 0;
+int rearIdx = -1;
+int count = 0;
+
+void enqueue(int val) {
+    if (count < MAX) {
+        queue[++rearIdx] = val;
+        count++;
+        printf("Enqueued: %d\\n", val);
+    }
+}
+
+int dequeue() {
+    if (count > 0) {
+        int val = queue[frontIdx++];
+        count--;
+        return val;
+    }
+    return -1;
+}
+
+int peekFront() {
+    if (count > 0) return queue[frontIdx];
+    return -1;
+}
+
+int main() {
+    enqueue(10);
+    enqueue(25);
+    enqueue(42);
+    enqueue(99);
+
+    printf("Front element: %d\\n", peekFront());
+    printf("Dequeued: %d\\n", dequeue());
+    return 0;
+}
+`,
+    csharp: `using System;
+using System.Collections.Generic;
+
+class Main {
+    static void Main(string[] args) {
+        Queue<int> queue = new Queue<int>();
+
+        // Enqueue elements (added at the rear)
+        queue.Enqueue(10);
+        queue.Enqueue(25);
+        queue.Enqueue(42);
+        queue.Enqueue(99);
+
+        // Peek front element
+        int front = queue.Peek();
+        Console.WriteLine("Front element: " + front);
+
+        // Dequeue element
+        int dequeued = queue.Dequeue();
+        Console.WriteLine("Dequeued element: " + dequeued);
+
+        Console.WriteLine("Remaining count: " + queue.Count);
+    }
+}
+`,
+  },
 };
 
 // ── Module icons for dropdown ──
 const MODULE_ICONS = {
   'array':               '▦',
+  '2d-array':            '▩',
   'linked-list':         '⛓',
   'doubly-linked-list':  '⇌',
+  'circular-linked-list': '➰',
   'stack':               '📚',
   'queue':               '🚦',
   'sorting':             '↕',
@@ -225,8 +917,6 @@ export default function Workspace() {
   const [searchParams]                  = useSearchParams();
   const navigate                        = useNavigate();
   const initialSlug                     = searchParams.get('module') || 'array';
-  const { user }                        = useAuth();
-
   // Modules loaded from API
   const [allModules, setAllModules]     = useState([]);
 
@@ -245,8 +935,16 @@ export default function Workspace() {
   const [errorMessage, setErrorMessage] = useState('');
   const [errorLine, setErrorLine]       = useState(null);
   const [running, setRunning]           = useState(false);
+  const abortControllerRef              = useRef(null);
+  const [theme, setTheme] = useState(() => localStorage.getItem('dsvp_workspace_theme') || 'dark');
+  useEffect(() => { localStorage.setItem('dsvp_workspace_theme', theme); }, [theme]);
+  const T = THEME[theme];
   const [userOutput, setUserOutput]     = useState('');
   const intervalRef                     = useRef(null);
+  // Bumped on every reset/run so VisualizationCanvas remounts fresh —
+  // it keeps sticky "last known state" refs internally that otherwise
+  // survive a Run click and leave the previous run's frame on screen.
+  const [runResetKey, setRunResetKey]   = useState(0);
 
   // Code history state
   const [saveModalOpen, setSaveModalOpen] = useState(false);
@@ -254,12 +952,7 @@ export default function Workspace() {
   const [history, setHistory]             = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  /* Load code history on mount and when module changes */
-  useEffect(() => {
-    loadHistory();
-  }, [moduleSlug]);
-
-  async function loadHistory() {
+  const loadHistory = useCallback(async () => {
     try {
       setLoadingHistory(true);
       const res = await getCodeHistory({ moduleSlug, limit: 50 });
@@ -269,7 +962,12 @@ export default function Workspace() {
     } finally {
       setLoadingHistory(false);
     }
-  }
+  }, [moduleSlug]);
+
+  /* Load code history on mount and when module changes */
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   /* Update starter code when language changes */
   function handleLanguageChange(lang) {
@@ -286,6 +984,7 @@ export default function Workspace() {
     setErrorMessage('');
     setErrorLine(null);
     setUserOutput('');
+    setRunResetKey(k => k + 1);
   }
 
   /* Auto-advance playback */
@@ -305,8 +1004,12 @@ export default function Workspace() {
   /* Keyboard controls */
   useEffect(() => {
     function onKey(e) {
-      // Don't hijack keys when focus is inside the Monaco editor textarea
-      if (e.target.tagName === 'TEXTAREA') return;
+      // Don't hijack keys when focus is inside the Monaco editor, a text
+      // input (e.g. the Save Code title field), or any editable element —
+      // otherwise Space/ArrowLeft/ArrowRight get swallowed by playback
+      // controls instead of reaching the field the user is typing into.
+      const tag = e.target.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || e.target.isContentEditable) return;
       if (e.code === 'Space' && events.length > 0) {
         e.preventDefault();
         setIsPlaying(p => !p);
@@ -321,8 +1024,10 @@ export default function Workspace() {
   async function handleRun() {
     clearRun();
     setRunning(true);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     try {
-      const res = await runCode({ language, code, moduleSlug });
+      const res = await runCode({ language, code, moduleSlug }, { signal: controller.signal });
       const data = res.data;
 
       if (data.status !== 'success') {
@@ -342,10 +1047,40 @@ export default function Workspace() {
       /* Auto-play after a short delay so UI settles */
       setTimeout(() => setIsPlaying(true), 300);
     } catch (err) {
-      setErrorMessage(err.response?.data?.message || 'Could not reach execution service.');
+      if (err.code === 'ERR_CANCELED' || err.name === 'CanceledError') {
+        // User hit Stop — not an error, nothing to show.
+      } else if (err.response?.status === 429) {
+        const d = err.response.data || {};
+        const mins = d.retryAfterSeconds ? Math.ceil(d.retryAfterSeconds / 60) : null;
+        setErrorMessage(
+          d.message ||
+          `Hourly execution limit reached${mins ? ` — try again in ${mins} min` : ''}.`
+        );
+      } else {
+        setErrorMessage(err.response?.data?.message || 'Could not reach execution service.');
+      }
     } finally {
       setRunning(false);
+      abortControllerRef.current = null;
     }
+  }
+
+  /**
+   * Stop button — covers both states a "run" can be interrupted in:
+   *  - still waiting on the backend (running=true): abort the in-flight
+   *    HTTP request so the UI stops waiting immediately (the backend's own
+   *    child process still runs to its own timeout server-side, but the
+   *    user isn't stuck staring at a spinner for it).
+   *  - already got results and is auto-stepping through them
+   *    (isPlaying=true): just stop the local playback timer.
+   */
+  function handleStop() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setRunning(false);
+    setIsPlaying(false);
   }
 
   const currentEvent = events[stepIndex] ?? null;
@@ -417,36 +1152,38 @@ export default function Workspace() {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100vh',
-      fontFamily: "'Inter', system-ui, sans-serif", background: '#0d1117',
+      fontFamily: "'Inter', system-ui, sans-serif", background: T.page,
+      transition: 'background 150ms',
     }}>
 
       {/* ── TOP BAR ── */}
       <header style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '0 16px', height: 52, flexShrink: 0,
-        background: '#161b22',
-        borderBottom: '1px solid rgba(255,255,255,.08)',
+        background: T.header,
+        borderBottom: `1px solid ${T.border}`,
+        transition: 'background 150ms, border-color 150ms',
       }}>
         <button onClick={() => navigate('/dashboard')} style={{
           display: 'flex', alignItems: 'center', gap: 5,
           background: 'none', border: 'none', cursor: 'pointer',
-          color: '#8b949e', fontSize: 13, padding: '4px 8px',
+          color: T.textMuted, fontSize: 13, padding: '4px 8px',
           borderRadius: 6, transition: 'color 150ms',
         }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#e6edf3'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#8b949e'; }}
+          onMouseEnter={e => { e.currentTarget.style.color = T.text; }}
+          onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; }}
         >← Dashboard</button>
 
-        <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,.1)' }} />
+        <div style={{ width: 1, height: 20, background: T.border }} />
 
         {/* Language selector */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={labelStyle}>Lang</span>
+          <span style={labelStyleFn(T)}>Lang</span>
           <select
             value={language}
             onChange={e => handleLanguageChange(e.target.value)}
             disabled={isPlaying}
-            style={selectStyle}
+            style={selectStyleFn(T)}
           >
             {LANGUAGES.map(l => <option key={l} value={l}>{LANG_LABELS[l]}</option>)}
           </select>
@@ -454,14 +1191,18 @@ export default function Workspace() {
 
         {/* Module selector */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={labelStyle}>Module</span>
+          <span style={labelStyleFn(T)}>Module</span>
           <select
             value={moduleSlug}
             onChange={e => {
                 const slug = e.target.value;
-                // Block if premium and no access
+                // Block if premium and no access — must match ModuleCatalog's
+                // logic (m.HasAccess), not a blanket user.IsPremium check,
+                // otherwise a module unlocked on the Dashboard (e.g. via a
+                // plan that grants access to specific modules) would still
+                // show locked here.
                 const mod = allModules.find(m => m.Slug === slug);
-                if (mod && mod.IsPremium && !user?.IsPremium) {
+                if (mod && mod.IsPremium && !mod.HasAccess) {
                   navigate('/pricing');
                   return;
                 }
@@ -469,7 +1210,7 @@ export default function Workspace() {
                 setCode((STARTER[slug]?.[language]) || STARTER['array'][language] || '');
                 clearRun();
               }}
-            style={selectStyle}
+            style={selectStyleFn(T)}
           >
             {allModules.length === 0 ? (
               // Fallback while loading
@@ -478,7 +1219,7 @@ export default function Workspace() {
               ))
             ) : (
               allModules.map(m => {
-                const locked = m.IsPremium && !user?.IsPremium;
+                const locked = m.IsPremium && !m.HasAccess;
                 const icon   = MODULE_ICONS[m.Slug] || '◈';
                 return (
                   <option key={m.Slug} value={m.Slug}>
@@ -491,6 +1232,20 @@ export default function Workspace() {
         </div>
 
         <div style={{ flex: 1 }} />
+
+        {/* Theme toggle */}
+        <button
+          onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '7px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            color: T.textMuted, border: `1px solid ${T.border}`,
+            background: 'transparent', cursor: 'pointer', transition: 'all 150ms',
+          }}
+        >
+          {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+        </button>
 
         {/* History toggle button */}
         <button
@@ -552,6 +1307,43 @@ export default function Workspace() {
         >
           {running ? <><SpinnerIcon /> Running…</> : <>▶ Run</>}
         </button>
+
+        {/* Stop button — cancels an in-flight execution request or halts
+            auto-playback immediately, whichever is active */}
+        {(running || isPlaying) && (
+          <button
+            onClick={handleStop}
+            title="Stop execution / playback immediately"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+              color: '#fff', border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(135deg,#ef4444,#b91c1c)',
+              boxShadow: '0 2px 10px rgba(239,68,68,.35)',
+              transition: 'all 150ms',
+            }}
+          >
+            ⏹ Stop
+          </button>
+        )}
+
+        {/* Reset button — clears the visualization panel for this module
+            without re-running the code */}
+        {(events.length > 0 || errorMessage) && !running && (
+          <button
+            onClick={clearRun}
+            title="Reset the visualization panel"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+              color: '#8b949e', border: '1px solid rgba(139,148,158,.35)', cursor: 'pointer',
+              background: 'transparent',
+              transition: 'all 150ms',
+            }}
+          >
+            ↺ Reset
+          </button>
+        )}
       </header>
 
       {/* ── SPLIT SCREEN ── */}
@@ -567,6 +1359,7 @@ export default function Workspace() {
           errorMessage={errorMessage}
           onDismissError={() => setErrorMessage('')}
           isPlaying={isPlaying}
+          theme={theme}
         />
 
         {/* Visualization panel */}
@@ -576,6 +1369,7 @@ export default function Workspace() {
           totalSteps={events.length}
           allEvents={events}
           currentStep={stepIndex}
+          resetKey={runResetKey}
         />
 
         {/* History sidebar */}
@@ -586,6 +1380,7 @@ export default function Workspace() {
             onLoad={handleLoadCode}
             onDelete={handleDeleteCode}
             onClose={() => setHistoryOpen(false)}
+            theme={theme}
           />
         )}
       </div>
@@ -615,22 +1410,23 @@ export default function Workspace() {
 }
 
 /* ── tiny shared style pieces ── */
-const labelStyle = {
-  fontSize: 10, fontWeight: 700, color: '#8b949e',
+const labelStyleFn = (T) => ({
+  fontSize: 10, fontWeight: 700, color: T.textMuted,
   textTransform: 'uppercase', letterSpacing: '.06em',
-};
-const selectStyle = {
-  background: '#21262d', border: '1px solid rgba(255,255,255,.1)',
-  color: '#e6edf3', borderRadius: 6, padding: '5px 10px',
+});
+const selectStyleFn = (T) => ({
+  background: T.selectBg, border: `1px solid ${T.selectBorder}`,
+  color: T.text, borderRadius: 6, padding: '5px 10px',
   fontSize: 13, cursor: 'pointer', outline: 'none',
-};
+});
 
-function PanelLabel({ children }) {
+function PanelLabel({ children, theme = 'dark' }) {
+  const T = THEME[theme];
   return (
     <div style={{
-      padding: '5px 16px', background: '#161b22',
-      borderBottom: '1px solid rgba(255,255,255,.06)',
-      fontSize: 10, fontWeight: 700, color: '#8b949e',
+      padding: '5px 16px', background: T.panel,
+      borderBottom: `1px solid ${T.borderSoft}`,
+      fontSize: 10, fontWeight: 700, color: T.textMuted,
       textTransform: 'uppercase', letterSpacing: '.06em',
       flexShrink: 0,
     }}>{children}</div>
@@ -649,7 +1445,7 @@ function SpinnerIcon() {
 }
 
 /* ── Resizable Panels ── */
-function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying }) {
+function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying, theme = 'dark' }) {
   const [editorWidth, setEditorWidth] = useState(50); // Percentage
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef(null);
@@ -687,7 +1483,7 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
           userSelect: isResizing ? 'none' : 'auto',
         }}
       >
-        <PanelLabel>Editor</PanelLabel>
+        <PanelLabel theme={theme}>Editor</PanelLabel>
         <CodeEditor
           language={language}
           value={code}
@@ -697,6 +1493,7 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
           errorMessage={errorMessage}
           onDismissError={onDismissError}
           disabled={isPlaying}
+          theme={theme}
         />
       </div>
 
@@ -737,12 +1534,13 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
   );
 }
 
-function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep }) {
+function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <PanelLabel>Visualization</PanelLabel>
       <div style={{ flex: 1, minHeight: 0 }}>
         <VisualizationCanvas
+          key={`${moduleSlug}-${resetKey}`}
           moduleSlug={moduleSlug}
           event={currentEvent}
           totalSteps={totalSteps}
@@ -813,7 +1611,8 @@ function SaveCodeModal({ open, onClose, onSave }) {
 }
 
 /* ── History Sidebar ── */
-function HistorySidebar({ history, loading, onLoad, onDelete, onClose }) {
+function HistorySidebar({ history, loading, onLoad, onDelete, onClose, theme = 'dark' }) {
+  const T = THEME[theme];
   const [copiedId, setCopiedId] = useState(null);
   const [loadingCopy, setLoadingCopy] = useState(null);
 
@@ -839,21 +1638,21 @@ function HistorySidebar({ history, loading, onLoad, onDelete, onClose }) {
 
   return (
     <aside style={{
-      width: 320, flexShrink: 0, background: '#161b22',
-      borderLeft: '1px solid rgba(255,255,255,.08)',
+      width: 320, flexShrink: 0, background: T.panel,
+      borderLeft: `1px solid ${T.border}`,
       display: 'flex', flexDirection: 'column',
       position: 'absolute', right: 0, top: 0, bottom: 0,
       zIndex: 100, boxShadow: '-4px 0 12px rgba(0,0,0,.3)',
     }}>
       {/* Header */}
       <div style={{
-        padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,.06)',
+        padding: '12px 16px', borderBottom: `1px solid ${T.borderSoft}`,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: '#0d1117',
+        background: T.panelAlt,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 16 }}>📜</span>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3', margin: 0 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: T.text, margin: 0 }}>
             Code History
           </h3>
         </div>

@@ -201,7 +201,8 @@ async function runPython(code) {
       [INSTRUMENTER_PY, tmpFile],
       { timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }
     );
-    return buildSuccess(stdout, stderr);
+    // Trace goes to stderr, user output is clean stdout — same split as Java.
+    return buildSuccessJava(stdout, stderr);
   } catch (err) {
     return buildError(err, 'python');
   } finally {
@@ -255,8 +256,13 @@ async function runJava(code) {
   fs.writeFileSync(srcFile, instrumented, 'utf8');
 
   try {
-    // Compile the instrumented code
-    await execFileAsync(javac, [srcFile], { timeout: TIMEOUT_MS, cwd: tmpDir });
+    // Compile the instrumented code. -encoding UTF-8 is required: the
+    // instrumenter's injected runtime shim/comments can contain non-ASCII
+    // characters (em-dashes, etc.), and javac otherwise falls back to the
+    // platform default charset — which on Windows is commonly a non-UTF-8
+    // codepage — causing spurious "unmappable character" compile errors
+    // that have nothing to do with the user's actual code.
+    await execFileAsync(javac, ['-encoding', 'UTF-8', srcFile], { timeout: TIMEOUT_MS, cwd: tmpDir });
     
     // Run the compiled code
     // NOTE: DSVP_TRACE lines go to stderr, user println goes to stdout
@@ -406,7 +412,7 @@ function buildSuccess(stdout, stderr) {
   };
 }
 
-// Java-specific: trace goes to stderr, user output is clean stdout
+// Java/Python: trace goes to stderr, user output is clean stdout
 function buildSuccessJava(stdout, stderr) {
   const traceData = parseTraceFromStdout(stderr || '');
   const userOut   = (stdout || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
@@ -432,8 +438,13 @@ function buildError(err, language) {
   const stderr = err.stderr || err.message || '';
   const stdout = err.stdout || '';
 
-  /* If we got partial trace output before the crash, include it */
-  const partial = parseTraceFromStdout(stdout);
+  /* If we got partial trace output before the crash, include it.
+     Java/Python emit trace events on stderr (stdout is clean user output),
+     other languages interleave DSVP_TRACE lines into stdout. */
+  const tracedStreamsFromStderr = language === 'java' || language === 'python';
+  const partial = tracedStreamsFromStderr
+    ? parseTraceFromStdout(stderr)
+    : parseTraceFromStdout(stdout);
   const isCompile = isCompileError(stderr, language);
 
   return {

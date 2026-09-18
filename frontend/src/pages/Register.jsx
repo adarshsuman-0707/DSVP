@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { signupSendOtp, signupVerifyOtp } from '../services/api';
+import { useGsapContext, gsap } from '../hooks/useGsap';
+import FloatingIcons from '../components/common/FloatingIcons';
 
 /* ─────────────────────────────────────────────
    REGISTER PAGE  (2 steps)
@@ -33,66 +35,130 @@ export default function Register() {
     navigate('/dashboard');
   }
 
+  useGsapContext(() => {
+    gsap.timeline({ defaults: { ease: 'power3.out' } })
+      .from('.auth-left > *', { x: -24, opacity: 0, duration: 0.6, stagger: 0.08 })
+      .from('.auth-logo', { y: -16, opacity: 0, duration: 0.5 }, '-=0.4')
+      .from('.auth-card', { y: 28, opacity: 0, scale: 0.97, duration: 0.65 }, '-=0.2')
+      .from('.auth-back', { opacity: 0, duration: 0.4 }, '-=0.2');
+  }, [step]);
+
   return (
-    <div style={{
-      minHeight: '100vh', display: 'flex',
+    <div className="auth-shell" style={{
+      minHeight: '100vh', display: 'flex', position: 'relative', overflow: 'hidden',
       background: 'linear-gradient(135deg, #0f2942 0%, #1F4E79 50%, #163a5e 100%)',
       fontFamily: "'Inter', system-ui, sans-serif",
     }}>
-      {/* ── left decorative panel ── */}
-      <div style={{
+      {/* subtle static dot texture — no movement, keeps focus on the card's animated border */}
+      <div aria-hidden style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        backgroundImage: 'radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px)',
+        backgroundSize: '26px 26px',
+        maskImage: 'radial-gradient(ellipse 70% 60% at 50% 40%, #000 40%, transparent 100%)',
+        WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 40%, #000 40%, transparent 100%)',
+      }} />
+      <FloatingIcons />
+
+      {/* ── left decorative panel — hidden on tablet/mobile ── */}
+      <div className="auth-decor" style={{
         flex: 1, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', padding: '40px 5%',
-        maxWidth: 520,
+        maxWidth: 520, position: 'relative', zIndex: 1,
       }}>
         <LeftPanel />
       </div>
 
       {/* ── right form panel ── */}
-      <div style={{
+      <div className="auth-form-col" style={{
         flex: 1, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        padding: '40px 5%',
+        padding: '32px 5%', position: 'relative', zIndex: 1, minWidth: 0,
       }}>
         {/* Logo */}
-        <Link to="/" style={{
+        <Link to="/" className="auth-logo" style={{
           display: 'flex', alignItems: 'center', gap: 10,
-          textDecoration: 'none', marginBottom: 40,
+          textDecoration: 'none', marginBottom: 36,
         }}>
           <div style={{
             width: 38, height: 38, borderRadius: 10,
             background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 18, fontWeight: 800, color: '#fff',
+            fontSize: 18, fontWeight: 800, color: '#fff', flexShrink: 0,
           }}>D</div>
           <span style={{ fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-.02em' }}>DSVP</span>
         </Link>
 
-        {/* Card */}
-        <div style={{
-          width: '100%', maxWidth: 420,
-          background: '#fff', borderRadius: 20,
-          padding: '40px',
-          boxShadow: '0 24px 60px rgba(0,0,0,.25)',
-        }}>
-          {step === 'form' && (
-            <RegisterForm onDone={handleFormDone} />
-          )}
-          {step === 'otp' && (
-            <OtpStep
-              fullName={fullName}
-              email={email}
-              password={password}
-              onBack={() => setStep('form')}
-              onDone={handleOtpDone}
-            />
-          )}
+        {/* Card — moving gradient border directly on the card itself + cursor spotlight */}
+        <div
+          className="auth-card gradient-border-move"
+          onMouseMove={e => {
+            const r = e.currentTarget.getBoundingClientRect();
+            e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`);
+            e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`);
+          }}
+          style={{
+            position: 'relative', width: '100%', maxWidth: 420,
+            borderRadius: 20, padding: '40px', overflow: 'hidden',
+            boxShadow: '0 24px 60px rgba(0,0,0,.35)',
+          }}
+        >
+          <div aria-hidden style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0.5, zIndex: 1,
+            background: 'radial-gradient(220px circle at var(--mx,50%) var(--my,0%), rgba(76,175,80,.08), transparent 70%)',
+          }} />
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            {step === 'form' && (
+              <RegisterForm onDone={handleFormDone} />
+            )}
+            {step === 'otp' && (
+              <OtpStep
+                fullName={fullName}
+                email={email}
+                password={password}
+                onBack={() => setStep('form')}
+                onDone={handleOtpDone}
+              />
+            )}
+          </div>
         </div>
 
-        <Link to="/" style={{ marginTop: 24, fontSize: 13, color: 'rgba(255,255,255,.5)', textDecoration: 'none' }}>
+        <Link to="/" className="auth-back" style={{ marginTop: 22, fontSize: 13, color: 'rgba(255,255,255,.5)', textDecoration: 'none' }}>
           ← Back to home
         </Link>
       </div>
+
+      <style>{`
+        /* animated moving-gradient border directly on the card div (border-box + padding-box trick) */
+        .gradient-border-move {
+          border: 4px solid transparent;
+          background:
+            linear-gradient(#fff, #fff) padding-box,
+            linear-gradient(90deg, #15803d, #1d4ed8, #6d28d9, #15803d) border-box;
+          background-size: 100% 100%, 300% 100%;
+          animation: gradientBorderMove 5s linear infinite;
+        }
+        @keyframes gradientBorderMove {
+          to { background-position: 0 0, -300% 0; }
+        }
+
+        @media (max-width: 980px) {
+          .auth-shell { flex-direction: column !important; }
+          .auth-decor { display: none !important; }
+          .auth-form-col { flex: 1 1 auto !important; width: 100% !important; max-width: 100% !important; min-height: 100vh; }
+        }
+        @media (max-width: 480px) {
+          .auth-form-col { padding: 24px 5% !important; }
+          .auth-card { padding: 28px 22px !important; }
+          .auth-logo { margin-bottom: 26px !important; }
+          .auth-logo span { font-size: 18px !important; }
+        }
+        @media (max-width: 360px) {
+          .auth-card { padding: 22px 16px !important; }
+        }
+        @media (max-width: 380px) {
+          .otp-box { width: 38px !important; height: 46px !important; font-size: 18px !important; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -359,6 +425,7 @@ function OtpStep({ fullName, email, password, onBack, onDone }) {
                 onKeyDown={e => handleKeyDown(i, e)}
                 onPaste={i === 0 ? handlePaste : undefined}
                 autoFocus={i === 0}
+                className="otp-box"
                 style={{
                   width: 46, height: 52, textAlign: 'center',
                   fontSize: 22, fontWeight: 700, color: '#1e293b',
@@ -492,21 +559,30 @@ const perks = [
 function LeftPanel() {
   return (
     <div style={{ maxWidth: 380, width: '100%' }}>
-      <h2 style={{ fontSize: 28, fontWeight: 800, color: '#fff', lineHeight: 1.2, marginBottom: 14 }}>
+      <h2 style={{ fontSize: 28, fontWeight: 800, color: '#fff', lineHeight: 1.2, marginBottom: 14, letterSpacing: '-.01em' }}>
         The visual way to learn data structures
       </h2>
       <p style={{ fontSize: 15, color: 'rgba(255,255,255,.65)', lineHeight: 1.7, marginBottom: 36 }}>
         Join thousands of developers who stopped reading about algorithms and started watching them.
       </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {perks.map(p => (
           <div key={p.title} style={{
             display: 'flex', gap: 14, alignItems: 'flex-start',
-            background: 'rgba(255,255,255,.07)',
-            border: '1px solid rgba(255,255,255,.12)',
+            background: 'linear-gradient(135deg, rgba(255,255,255,.09), rgba(255,255,255,.03))',
+            border: '1px solid rgba(255,255,255,.13)',
             borderRadius: 14, padding: '16px 18px',
-          }}>
-            <span style={{ fontSize: 24, lineHeight: 1, flexShrink: 0 }}>{p.icon}</span>
+            transition: 'transform 180ms, border-color 180ms',
+          }}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'translateX(4px)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.28)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'translateX(0)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.13)'; }}
+          >
+            <span style={{
+              width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+              background: 'linear-gradient(135deg,#4CAF50,#2E74B5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 19, boxShadow: '0 6px 16px rgba(46,116,181,.3)',
+            }}>{p.icon}</span>
             <div>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>{p.title}</div>
               <div style={{ fontSize: 13, color: 'rgba(255,255,255,.6)', lineHeight: 1.55 }}>{p.desc}</div>
