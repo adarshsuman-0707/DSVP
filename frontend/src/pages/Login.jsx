@@ -147,6 +147,18 @@ function LoginForm({ onForgot }) {
   const { login } = useAuth();
   const navigate  = useNavigate();
 
+  // Set by the global 401 handler (api.js) when an admin action — block,
+  // deactivate, password reset — invalidated a session that was mid-use.
+  useEffect(() => {
+    try {
+      const msg = sessionStorage.getItem('dsvp_auth_message');
+      if (msg) {
+        setError(msg);
+        sessionStorage.removeItem('dsvp_auth_message');
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');

@@ -5,15 +5,19 @@ const ARRAY2D_OPS = new Set(['init2d', 'read2d', 'write2d']);
 const EXEC_OPS = new Set(['call', 'line', 'return']);
 const LL_OPS = new Set(['ll_snap', 'll_init', 'll_update', 'll_insert', 'll_delete', 'll_traverse']);
 const BST_OPS = new Set(['bst_snap', 'bst_init', 'bst_update', 'bst_insert', 'bst_delete', 'bst_traverse']);
+const GRAPH_OPS = new Set(['graph_init', 'graph_step', 'graph_build']);
 
 function buildTraceEvents({ language, rawTrace, moduleSlug, userOutput }) {
   if (!rawTrace || !Array.isArray(rawTrace.steps)) return [];
-  const events = normalizeAll(rawTrace.steps, userOutput || '');
+  const events = normalizeAll(rawTrace.steps, userOutput || '', moduleSlug);
   if (moduleSlug === 'linked-list') {
     return compactLLEvents(events, LL_OPS);
   }
   if (moduleSlug === 'bst') {
     return compactLLEvents(events, BST_OPS);
+  }
+  if (moduleSlug === 'graph') {
+    return compactGraphEvents(events);
   }
   return events;
 }
@@ -68,12 +72,44 @@ function compactLLEvents(events, OPS) {
   return compacted.map((e, idx) => ({ ...e, step: idx + 1 }));
 }
 
+function compactGraphEvents(events) {
+  const hasGraph = events.some(e => GRAPH_OPS.has(e.type));
+  if (!hasGraph) return events;
+
+  const compacted = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e.type === 'line') {
+      const next = events[i + 1];
+      if (next && GRAPH_OPS.has(next.type)) continue;
+      const prev = compacted[compacted.length - 1];
+      if (prev && (GRAPH_OPS.has(prev.type) || prev.type === 'call')) continue;
+    }
+    if (GRAPH_OPS.has(e.type)) {
+      const prev = compacted[compacted.length - 1];
+      if (prev && GRAPH_OPS.has(prev.type)) {
+        const same = prev.activeGraphNodeId === e.activeGraphNodeId &&
+          JSON.stringify(prev.graphVisited) === JSON.stringify(e.graphVisited) &&
+          JSON.stringify(prev.graphFrontier) === JSON.stringify(e.graphFrontier) &&
+          JSON.stringify(prev.graphEdges) === JSON.stringify(e.graphEdges);
+        if (same) {
+          compacted[compacted.length - 1] = e;
+          continue;
+        }
+      }
+    }
+    compacted.push(e);
+  }
+  return compacted.map((e, idx) => ({ ...e, step: idx + 1 }));
+}
+
 /* ── Main normalizer ───────────────────────────────────────────────────── */
-function normalizeAll(steps, userOutput) {
+function normalizeAll(steps, userOutput, moduleSlug) {
   const events = [];
 
   // Running context
   const ctx = {
+    moduleSlug,
     frames: [],   // StackFrame stack
     lastSnap: [],   // most recent array snapshot (legacy single-panel fallback)
     // Per-variable array state — lets two separately-declared arrays
@@ -87,6 +123,7 @@ function normalizeAll(steps, userOutput) {
     lastGrid2D: [],   // most recent 2D array snapshot
     lastLLSnap: [],   // most recent linked-list snapshot
     lastBSTSnap: [],   // most recent tree snapshot
+    lastGraphState: { nodes: [], edges: [], visited: [], frontier: [] },
     lineNo: null,
   };
 
@@ -120,6 +157,13 @@ function normalizeAll(steps, userOutput) {
     if (BST_OPS.has(op)) {
       const evt = buildBSTEvt(s, stepNo, op, ctx, userOutput);
       ctx.lastBSTSnap = evt.treeState;
+      events.push(evt);
+      continue;
+    }
+
+    if (GRAPH_OPS.has(op)) {
+      const evt = buildGraphEvt(s, stepNo, op, ctx, userOutput);
+      ctx.lastGraphState = { nodes: evt.graphNodes, edges: evt.graphEdges, visited: evt.graphVisited, frontier: evt.graphFrontier };
       events.push(evt);
       continue;
     }
@@ -291,6 +335,118 @@ function opToBSTDesc(op, nodes, activeId) {
   }
 }
 
+/* ── Java graph auto-detection from locals' toString() reprs ───────────── */
+// Map<Integer,List<Integer>>.toString()  -> "{0=[1, 2], 1=[0, 3]}"
+// Set<Integer>/Deque<Integer>.toString() -> "[0, 1]"
+const MAP_ADJ_RE = /^\{(.*)\}$/;
+const LIST_RE = /^\[(.*)\]$/;
+
+function parseJavaAdjMap(str) {
+  const m = MAP_ADJ_RE.exec(str);
+  if (!m) return null;
+  const body = m[1].trim();
+  if (body === '') return {};
+  const adj = {};
+  // Entries are "key=[v, v, ...]" separated by ", " at the top level —
+  // safe to split this way since values never contain nested braces here.
+  const entryRe = /(-?\d+)=\[([^\]]*)\]/g;
+  let match; let any = false;
+  while ((match = entryRe.exec(body)) !== null) {
+    any = true;
+    const key = parseInt(match[1], 10);
+    const vals = match[2].trim() === '' ? [] : match[2].split(',').map(v => parseInt(v.trim(), 10)).filter(n => !Number.isNaN(n));
+    adj[key] = vals;
+  }
+  return any ? adj : null;
+}
+
+function parseJavaIntList(str) {
+  const m = LIST_RE.exec(str);
+  if (!m) return null;
+  const body = m[1].trim();
+  if (body === '') return [];
+  const parts = body.split(',').map(v => parseInt(v.trim(), 10));
+  if (parts.some(n => Number.isNaN(n))) return null;
+  return parts;
+}
+
+function detectJavaGraphFromLocals(locals, lastState, allowConstructionPhase) {
+  if (!locals) return null;
+  let adjName = null, adj = null;
+  for (const [k, v] of Object.entries(locals)) {
+    if (typeof v !== 'string') continue;
+    const parsed = parseJavaAdjMap(v);
+    if (parsed && Object.keys(parsed).length > 0) { adjName = k; adj = parsed; break; }
+  }
+  if (!adj) return null;
+
+  let visited = null, visitedName = null;
+  let frontier = null, frontierName = null;
+  for (const [k, v] of Object.entries(locals)) {
+    if (k === adjName || typeof v !== 'string') continue;
+    const list = parseJavaIntList(v);
+    if (list === null) continue;
+    if (k.toLowerCase().includes('visit')) { visited = list; visitedName = k; continue; }
+    if (['queue', 'q', 'stack', 'frontier', 'dq'].includes(k.toLowerCase())) { frontier = list; frontierName = k; }
+  }
+  // Outside the graph module, still require a visited/frontier-shaped local
+  // as a disambiguator — an adjacency-shaped Map<Integer,List<Integer>> can
+  // legitimately show up in unrelated algorithms, and without traversal
+  // state to confirm it's actually a graph BFS/DFS we'd risk hijacking
+  // those into the graph visualizer. Inside the graph module itself,
+  // `allowConstructionPhase` lets a bare adjacency map (no traversal state
+  // yet) through too — otherwise the graph's own construction (adding
+  // nodes/edges before BFS/DFS starts) is invisible and the whole
+  // structure just pops into existence, already complete, the instant
+  // `visited`/`queue` first appears.
+  if (visited === null && frontier === null && !allowConstructionPhase) return null;
+
+  const nodes = Object.keys(adj).map(k => ({ id: parseInt(k, 10) }));
+  const edges = [];
+  for (const [k, nbrs] of Object.entries(adj)) {
+    for (const w of nbrs) edges.push({ from: parseInt(k, 10), to: w });
+  }
+
+  const prevVisited = lastState?.visited || [];
+  let activeId = null;
+  const newly = (visited || []).filter(x => !prevVisited.includes(x));
+  if (newly.length) {
+    activeId = newly[newly.length - 1];
+  } else if (frontier && frontier.length) {
+    activeId = frontier[0];
+  } else {
+    // Construction phase — no visited/frontier yet. Highlight whichever
+    // edge's target is new since the last snapshot, same idea as Python's
+    // structural edge diffing, so adding an edge visibly lights up the
+    // node it connects to instead of the graph silently growing unmarked.
+    const prevEdgeKeys = new Set((lastState?.edges || []).map(e => `${e.from}->${e.to}`));
+    const newEdges = edges.filter(e => !prevEdgeKeys.has(`${e.from}->${e.to}`));
+    if (newEdges.length) activeId = newEdges[newEdges.length - 1].to;
+  }
+
+  return { nodes, edges, visited: visited || [], frontier: frontier || [], activeId };
+}
+
+/* ── Graph event builder ──────────────────────────────────────────────── */
+function buildGraphEvt(s, stepNo, op, ctx, userOutput) {
+  const nodes = Array.isArray(s.nodes) ? s.nodes : ctx.lastGraphState.nodes;
+  const edges = Array.isArray(s.edges) ? s.edges : ctx.lastGraphState.edges;
+  const visited = Array.isArray(s.visited) ? s.visited : [];
+  const frontier = Array.isArray(s.frontier) ? s.frontier : [];
+  const activeId = (s.activeId !== undefined) ? s.activeId : null;
+  const desc = s.desc || (op === 'graph_init'
+    ? `Graph initialized (${nodes.length} nodes)`
+    : (activeId != null ? `Visit ${activeId}` : `Traversal step`));
+
+  return base(stepNo, op, 'graph', desc, ctx, userOutput, {
+    graphNodes: nodes,
+    graphEdges: edges,
+    graphVisited: visited,
+    graphFrontier: frontier,
+    activeGraphNodeId: activeId,
+  });
+}
+
 /* ── Execution event builder ──────────────────────────────────────────── */
 function buildExecEvts(s, stepNo, op, ctx, userOutput) {
   if (op === 'call') {
@@ -333,10 +489,35 @@ function buildExecEvts(s, stepNo, op, ctx, userOutput) {
     ctx.lineNo = s.line ?? ctx.lineNo;
 
     const desc = `Line ${s.line} in ${s.func ?? '?'}`;
-    return [base(stepNo, 'line', 'execution', desc, ctx, userOutput, {
+    const overrides = {
       currentLine: s.line ?? null,
       currentFunc: s.func ?? topFunc(ctx),
-    })];
+    };
+
+    // ── Java graph fallback ──────────────────────────────────────────
+    // Java has no runtime AST hook like Python's sys.settrace, so instead
+    // of a dedicated graph_* op we recognize the adjacency-list BFS/DFS
+    // shape from the already-emitted locals' toString() reprs (a
+    // Map<Integer,List<Integer>> prints "{0=[1, 2], ...}", a
+    // Set<Integer>/Deque<Integer> prints "[0, 1]") — same technique the
+    // frontend already relies on for readable variable display.
+    const g = detectJavaGraphFromLocals(
+      ctx.frames.length ? ctx.frames[ctx.frames.length - 1].locals : {},
+      ctx.lastGraphState,
+      ctx.moduleSlug === 'graph'
+    );
+    if (g) {
+      ctx.lastGraphState = { nodes: g.nodes, edges: g.edges, visited: g.visited, frontier: g.frontier };
+      Object.assign(overrides, {
+        graphNodes: g.nodes,
+        graphEdges: g.edges,
+        graphVisited: g.visited,
+        graphFrontier: g.frontier,
+        activeGraphNodeId: g.activeId,
+      });
+    }
+
+    return [base(stepNo, 'line', 'execution', desc, ctx, userOutput, overrides)];
   }
 
   if (op === 'return') {
@@ -390,6 +571,12 @@ function base(stepNo, type, category, description, ctx, userOutput, overrides) {
     // tree panel defaults (overridden by bst events)
     treeState: [...(ctx.lastBSTSnap || [])],
     activeTreeNodeId: -1,
+    // graph panel defaults (overridden by graph events)
+    graphNodes: [...(ctx.lastGraphState?.nodes || [])],
+    graphEdges: [...(ctx.lastGraphState?.edges || [])],
+    graphVisited: [...(ctx.lastGraphState?.visited || [])],
+    graphFrontier: [...(ctx.lastGraphState?.frontier || [])],
+    activeGraphNodeId: null,
     // call-stack panel
     callStack: ctx.frames.map(f => ({ ...f, locals: { ...f.locals }, args: { ...f.args } })),
     currentFunc: topFunc(ctx),

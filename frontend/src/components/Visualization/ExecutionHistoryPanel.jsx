@@ -4,8 +4,31 @@
  * Shows a scrollable log of all execution events (line, call, return, array ops)
  * so users can see what has happened even when lines disappear from view.
  */
-export default function ExecutionHistoryPanel({ events = [], currentStep = 0 }) {
+const PALETTE = {
+  dark: {
+    bg: '#0d1117', border: 'rgba(255,255,255,.07)', borderSoft: 'rgba(255,255,255,.05)',
+    text: '#e6edf3', textMuted: '#8b949e', textFaint: '#555', activeBg: 'rgba(76,175,80,.12)',
+  },
+  light: {
+    bg: '#ffffff', border: '#d0d7de', borderSoft: '#e2e8f0',
+    text: '#1e293b', textMuted: '#64748b', textFaint: '#94a3b8', activeBg: 'rgba(22,163,74,.10)',
+  },
+};
+
+const TYPE_COLORS = {
+  dark: {
+    call: '#60a5fa', return: '#f472b6', line: '#a3e635', write: '#60a5fa',
+    read: '#86efac', swap: '#fcd34d', compare: '#f0abfc', init: '#c4b5fd', default: '#8b949e',
+  },
+  light: {
+    call: '#2563eb', return: '#be185d', line: '#4d7c0f', write: '#2563eb',
+    read: '#15803d', swap: '#b45309', compare: '#a21caf', init: '#6d28d9', default: '#64748b',
+  },
+};
+
+export default function ExecutionHistoryPanel({ events = [], currentStep = 0, theme = 'dark' }) {
   const historyRef = useRef(null);
+  const c = PALETTE[theme] || PALETTE.dark;
 
   // Auto-scroll to current step
   useEffect(() => {
@@ -23,17 +46,17 @@ export default function ExecutionHistoryPanel({ events = [], currentStep = 0 }) 
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        background: '#0d1117',
-        borderTop: '1px solid rgba(255,255,255,.07)',
+        background: c.bg,
+        borderTop: `1px solid ${c.border}`,
       }}>
         <div style={{
           padding: '8px 12px',
           fontSize: 10,
           fontWeight: 700,
-          color: '#8b949e',
+          color: c.textMuted,
           textTransform: 'uppercase',
           letterSpacing: '.06em',
-          borderBottom: '1px solid rgba(255,255,255,.05)',
+          borderBottom: `1px solid ${c.borderSoft}`,
         }}>
           Execution Log
         </div>
@@ -42,7 +65,7 @@ export default function ExecutionHistoryPanel({ events = [], currentStep = 0 }) 
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#555',
+          color: c.textFaint,
           fontSize: 12,
         }}>
           No execution history
@@ -56,18 +79,18 @@ export default function ExecutionHistoryPanel({ events = [], currentStep = 0 }) 
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
-      background: '#0d1117',
-      borderTop: '1px solid rgba(255,255,255,.07)',
+      background: c.bg,
+      borderTop: `1px solid ${c.border}`,
     }}>
       {/* Header */}
       <div style={{
         padding: '8px 12px',
         fontSize: 10,
         fontWeight: 700,
-        color: '#8b949e',
+        color: c.textMuted,
         textTransform: 'uppercase',
         letterSpacing: '.06em',
-        borderBottom: '1px solid rgba(255,255,255,.05)',
+        borderBottom: `1px solid ${c.borderSoft}`,
         flexShrink: 0,
       }}>
         Execution Log
@@ -88,6 +111,7 @@ export default function ExecutionHistoryPanel({ events = [], currentStep = 0 }) 
             event={event}
             step={idx + 1}
             isCurrent={idx + 1 === currentStep}
+            theme={theme}
           />
         ))}
       </div>
@@ -95,54 +119,56 @@ export default function ExecutionHistoryPanel({ events = [], currentStep = 0 }) 
   );
 }
 
-function HistoryItem({ event, step, isCurrent }) {
+function HistoryItem({ event, step, isCurrent, theme = 'dark' }) {
   const { type, description, func, line, sourceLine } = event;
+  const c = PALETTE[theme] || PALETTE.dark;
+  const types = TYPE_COLORS[theme] || TYPE_COLORS.dark;
 
   // Determine icon and color based on event type
   let icon = '●';
-  let color = '#8b949e';
+  let color = types.default;
   let bgColor = 'transparent';
 
   switch (type) {
     case 'call':
       icon = '→';
-      color = '#60a5fa';
+      color = types.call;
       break;
     case 'return':
       icon = '←';
-      color = '#f472b6';
+      color = types.return;
       break;
     case 'line':
       icon = '┃';
-      color = '#a3e635';
+      color = types.line;
       break;
     case 'write':
       icon = '✎';
-      color = '#60a5fa';
+      color = types.write;
       break;
     case 'read':
       icon = '◎';
-      color = '#86efac';
+      color = types.read;
       break;
     case 'swap':
       icon = '⇄';
-      color = '#fcd34d';
+      color = types.swap;
       break;
     case 'compare':
       icon = '?';
-      color = '#f0abfc';
+      color = types.compare;
       break;
     case 'init':
       icon = '◈';
-      color = '#c4b5fd';
+      color = types.init;
       break;
     default:
       icon = '●';
-      color = '#8b949e';
+      color = types.default;
   }
 
   if (isCurrent) {
-    bgColor = 'rgba(76,175,80,.12)';
+    bgColor = c.activeBg;
   }
 
   // Build display text
@@ -177,7 +203,7 @@ function HistoryItem({ event, step, isCurrent }) {
     >
       {/* Step number */}
       <span style={{
-        color: '#555',
+        color: c.textFaint,
         fontSize: 10,
         fontWeight: 600,
         minWidth: 28,
@@ -200,7 +226,7 @@ function HistoryItem({ event, step, isCurrent }) {
 
       {/* Description */}
       <span style={{
-        color: isCurrent ? '#e6edf3' : '#8b949e',
+        color: isCurrent ? c.text : c.textMuted,
         flex: 1,
         lineHeight: 1.4,
         wordBreak: 'break-word',

@@ -119,6 +119,26 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
         Set<String> nodeVars = collectNodeVars(m);
         if (nodeVars.isEmpty()) return;
 
+        // Trace at method entry when a node-typed parameter is passed in.
+        // Without this, a PURELY recursive approach — inorder/preorder/
+        // postorder traversal, or a recursive search/insert/delete whose
+        // only "loop" is the call stack rather than a while/for — matches
+        // none of instrumentBlock's patterns (child assignment, new-node
+        // decl, top-of-loop) and so never fires a single trace event: the
+        // tree renders once after insertion, then the entire traversal
+        // animates nothing. Each recursive re-entry now becomes one step.
+        String entryParam = m.getParameters().stream()
+            .map(p -> p.getNameAsString())
+            .filter(nodeVars::contains)
+            .findFirst().orElse(null);
+        if (entryParam != null) {
+            String root = pickRoot(nodeVars);
+            if (root != null) {
+                body.getStatements().add(0,
+                    traceBSTStmt(root, "Visiting " + m.getNameAsString() + "(" + entryParam + ")", entryParam));
+            }
+        }
+
         instrumentBlock(body, nodeVars);
     }
 

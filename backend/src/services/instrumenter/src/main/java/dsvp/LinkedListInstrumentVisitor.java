@@ -138,6 +138,26 @@ public class LinkedListInstrumentVisitor extends VoidVisitorAdapter<Void> {
         Set<String> nodeVars = collectNodeVars(m);
         if (nodeVars.isEmpty()) return;
 
+        // Trace at method entry when a node-typed parameter is passed in.
+        // Without this, a PURELY recursive traversal (e.g. a recursive
+        // printList/length/reverse whose only "loop" is the call stack
+        // rather than a while/for) matches none of instrumentBlock's
+        // patterns (next-assignment, new-node decl, top-of-loop) and so
+        // never fires a single trace event — each recursive re-entry now
+        // becomes one visible step instead of the list only ever showing
+        // its post-build state.
+        String entryParam = m.getParameters().stream()
+            .map(p -> p.getNameAsString())
+            .filter(nodeVars::contains)
+            .findFirst().orElse(null);
+        if (entryParam != null) {
+            String head = pickHead(nodeVars);
+            if (head != null) {
+                body.getStatements().add(0,
+                    traceLLStmt(head, "Visiting " + m.getNameAsString() + "(" + entryParam + ")", entryParam));
+            }
+        }
+
         // Instrument the block
         instrumentBlock(body, nodeVars);
     }

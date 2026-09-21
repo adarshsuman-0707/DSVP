@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createPaymentOrder, verifyPayment } from '../services/api';
+import { createPaymentOrder, verifyPayment, getCoinDiscountQuote } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const PLANS = [
   {
@@ -52,20 +53,40 @@ const PLANS = [
 
 export default function Pricing() {
   const navigate = useNavigate();
+  const { user, updateUser } = useAuth();
   const [loading, setLoading] = useState(null);
   const [error, setError] = useState('');
+  const [useCoins, setUseCoins] = useState({}); // { [planId]: bool }
+  const [quotes, setQuotes] = useState({});     // { [planId]: { discount, coinsUsed } }
+
+  const currentPlan = user?.SubscriptionPlan || 'free';
+  const canUseCoins = user?.CoinsUnlocked && (user?.CoinBalance || 0) > 0;
+
+  async function toggleUseCoins(plan) {
+    const next = !useCoins[plan.id];
+    setUseCoins(u => ({ ...u, [plan.id]: next }));
+    if (next && !quotes[plan.id]) {
+      try {
+        const r = await getCoinDiscountQuote(user.CoinBalance, plan.price);
+        setQuotes(q => ({ ...q, [plan.id]: r.data }));
+      } catch { /* ignore — fall back to no discount if the quote fails */ }
+    }
+  }
 
   async function handleUpgrade(plan) {
     if (plan.id === 'free') return;
-    
+
     setLoading(plan.id);
     setError('');
 
     try {
+      const coinsToRedeem = useCoins[plan.id] ? (user.CoinBalance || 0) : 0;
+
       // Create payment order
       const orderRes = await createPaymentOrder({
         plan: plan.id,
-        amount: plan.price
+        amount: plan.price,
+        coinsToRedeem,
       });
 
       const order = orderRes.data;
@@ -81,13 +102,24 @@ export default function Pricing() {
         handler: async function (response) {
           try {
             // Verify payment
-            await verifyPayment({
+            const verifyRes = await verifyPayment({
               orderId: order.orderId,
               paymentId: response.razorpay_payment_id,
               signature: response.razorpay_signature
             });
 
-            alert(`🎉 Successfully upgraded to ${plan.name} plan!`);
+            // The JWT bakes in subscriptionPlan/module access, so without a
+            // fresh token + user object the app would keep treating this
+            // browser session as the old (free) plan until next login.
+            if (verifyRes.data.token) {
+              localStorage.setItem('dsvp_token', verifyRes.data.token);
+            }
+            if (verifyRes.data.user) {
+              updateUser(verifyRes.data.user);
+            }
+
+            const coinMsg = order.discount > 0 ? ` (₹${order.discount} off using ${order.coinsUsed} coins)` : '';
+            alert(`🎉 Successfully upgraded to ${plan.name} plan!${coinMsg}`);
             navigate('/dashboard');
           } catch (err) {
             setError('Payment verification failed. Please contact support.');
@@ -177,7 +209,11 @@ export default function Pricing() {
         gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
         gap: 30
       }}>
-        {PLANS.map(plan => (
+        {PLANS.map(plan => {
+        const isCurrent = plan.id === currentPlan;
+        const rank = { free: 0, basic: 1, premium: 2 };
+        const isDowngrade = rank[plan.id] < rank[currentPlan];
+        return (
           <div
             key={plan.id}
             style={{
@@ -255,31 +291,55 @@ export default function Pricing() {
               ))}
             </ul>
 
+            {canUseCoins && plan.id !== 'free' && !isCurrent && !isDowngrade && (
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14,
+                padding: '8px 12px', borderRadius: 8,
+                background: 'rgba(242,169,59,0.08)', border: '1px solid rgba(242,169,59,0.25)',
+                fontSize: 12.5, color: '#fcd34d', cursor: 'pointer',
+              }}>
+                <input type="checkbox" checked={!!useCoins[plan.id]} onChange={() => toggleUseCoins(plan)} />
+                🪙 Use my {user.CoinBalance} coins
+                {useCoins[plan.id] && quotes[plan.id]?.discount > 0 && (
+                  <span style={{ fontWeight: 700, color: '#4CAF50' }}>· ₹{quotes[plan.id].discount} off</span>
+                )}
+              </label>
+            )}
+
             <button
               onClick={() => handleUpgrade(plan)}
-              disabled={loading === plan.id || plan.id === 'free'}
+              disabled={loading === plan.id || plan.id === 'free' || isCurrent || isDowngrade}
               style={{
                 width: '100%',
                 padding: '14px 24px',
                 borderRadius: 8,
                 border: 'none',
-                background: plan.id === 'free'
-                  ? 'rgba(255,255,255,0.1)'
-                  : plan.highlighted
-                    ? 'linear-gradient(135deg, #4CAF50, #2E74B5)'
-                    : 'rgba(76,175,80,0.2)',
+                background: isCurrent
+                  ? 'rgba(76,175,80,0.35)'
+                  : plan.id === 'free'
+                    ? 'rgba(255,255,255,0.1)'
+                    : plan.highlighted
+                      ? 'linear-gradient(135deg, #4CAF50, #2E74B5)'
+                      : 'rgba(76,175,80,0.2)',
                 color: '#fff',
                 fontSize: 16,
                 fontWeight: 700,
-                cursor: plan.id === 'free' ? 'not-allowed' : 'pointer',
+                cursor: (plan.id === 'free' || isCurrent || isDowngrade) ? 'not-allowed' : 'pointer',
                 opacity: loading === plan.id ? 0.6 : 1,
                 transition: 'all 200ms'
               }}
             >
-              {loading === plan.id ? 'Processing...' : plan.buttonText}
+              {loading === plan.id
+                ? 'Processing...'
+                : isCurrent
+                  ? '✓ Current Plan'
+                  : isDowngrade
+                    ? 'Included in your plan'
+                    : plan.buttonText}
             </button>
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {/* FAQ Section */}

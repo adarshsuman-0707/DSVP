@@ -3,6 +3,7 @@ package dsvp;
 import com.github.javaparser.ast.ArrayCreationLevel;
 import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.type.ArrayType;
@@ -49,6 +50,22 @@ public class Array2DInstrumentVisitor extends VoidVisitorAdapter<Void> {
             MethodDeclaration md = vd.findAncestor(MethodDeclaration.class).orElse(null);
             if (md == null) return; // skip fields — same scoping choice as ArrayInstrumentVisitor
             rewriteMap.put(md.getNameAsString() + "#" + vd.getNameAsString(), suffix);
+        });
+        // Parameters too — without this, passing a grid into ANY helper
+        // method (a recursive matrix sum/flood-fill/rotation, the whole
+        // point of writing a recursive 2D-array algorithm) left the
+        // parameter typed as plain int[][]/char[][] while the caller's
+        // local was rewritten to DSVPArray2D*, a straight type mismatch
+        // that failed to compile before the program ever ran. Registering
+        // params here also makes isActive() recognize them inside the
+        // method body, so grid[i][j] reads/writes on a parameter get
+        // rewritten to .get()/.set() calls exactly like a local variable.
+        cu.findAll(Parameter.class).forEach(p -> {
+            String suffix = trackableSuffix(p.getType());
+            if (suffix == null) return;
+            MethodDeclaration md = p.findAncestor(MethodDeclaration.class).orElse(null);
+            if (md == null) return;
+            rewriteMap.put(md.getNameAsString() + "#" + p.getNameAsString(), suffix);
         });
         if (!rewriteMap.isEmpty()) rewrote = true;
         super.visit(cu, arg);
@@ -113,6 +130,27 @@ public class Array2DInstrumentVisitor extends VoidVisitorAdapter<Void> {
                 }
             }
         });
+    }
+
+    // 1.5) Parameters: int[][]/char[][] param -> DSVPArray2DInt/Char
+    @Override
+    public void visit(Parameter p, Void arg) {
+        super.visit(p, arg);
+        String suffix = trackableSuffix(p.getType());
+        if (suffix == null) return;
+        MethodDeclaration md = p.findAncestor(MethodDeclaration.class).orElse(null);
+        if (md == null) return;
+        if (!rewriteMap.containsKey(md.getNameAsString() + "#" + p.getNameAsString())) return;
+        p.setType(dsvpType(suffix));
+    }
+
+    // 1.6) Return types — a helper that BUILDS and returns a grid needs the
+    // same rewrite as parameters/locals.
+    @Override
+    public void visit(MethodDeclaration m, Void arg) {
+        super.visit(m, arg);
+        String suffix = trackableSuffix(m.getType());
+        if (suffix != null) m.setType(dsvpType(suffix));
     }
 
     private Expression rawLiteral(String suffix, ArrayInitializerExpr init) {

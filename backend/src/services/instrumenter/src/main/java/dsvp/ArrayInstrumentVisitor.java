@@ -1,11 +1,13 @@
 package dsvp;
 
+import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.*;
+import com.github.javaparser.ast.stmt.ForEachStmt;
 import com.github.javaparser.ast.type.ArrayType;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.Type;
@@ -59,6 +61,19 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
         // 1. Local variable declarations (all methods)
         root.findAll(VariableDeclarator.class).forEach(vd -> {
             if (!isTrackable(vd.getType())) return;
+            // A for-each loop's OWN control variable — `for (int[] edge : ...)`
+            // — is a VariableDeclarator too, but it has no initializer
+            // expression to rewrite (the value comes from the iterable each
+            // pass), and it's a fundamentally different case anyway: iterating
+            // a collection of raw arrays (e.g. `List<int[]>` edge/weight
+            // pairs, the standard graph-algorithm shape) isn't something this
+            // visitor traces at all. Registering it here made Pass B rewrite
+            // ONLY the declared type to DSVPArray (nothing to fix up the
+            // initializer side of, since there isn't one), producing
+            // `for (DSVPArray edge : someList)` — a type mismatch against
+            // the collection's actual `int[]` element type. Leave these
+            // untouched entirely.
+            if (isForEachLoopVariable(vd)) return;
             MethodDeclaration md = vd.findAncestor(MethodDeclaration.class).orElse(null);
             if (md == null) return;  // skip class-level fields
             String suffix = suffix(vd.getType());
@@ -111,6 +126,13 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
     private String methodOf(com.github.javaparser.ast.Node n) {
         return n.findAncestor(MethodDeclaration.class)
                 .map(MethodDeclaration::getNameAsString).orElse("");
+    }
+
+    private boolean isForEachLoopVariable(VariableDeclarator vd) {
+        Node parent = vd.getParentNode().orElse(null);
+        if (!(parent instanceof VariableDeclarationExpr)) return false;
+        Node grandparent = parent.getParentNode().orElse(null);
+        return grandparent instanceof ForEachStmt && ((ForEachStmt) grandparent).getVariable() == parent;
     }
 
     private boolean isMainStringArgs(Parameter p) {
@@ -192,6 +214,29 @@ public class ArrayInstrumentVisitor extends VoidVisitorAdapter<Void> {
                 } else {
                     vd.setInitializer(wrap(init, varName));
                 }
+            } else if (init instanceof NameExpr && isActive(((NameExpr) init).getNameAsString(), init)) {
+                // `int[] c = arr;` where `arr` is itself a tracked variable —
+                // by the time this runs, `arr`'s own declaration has already
+                // been rewritten to DSVPArray, so `init` is already
+                // DSVPArray-typed. Wrapping it again would try to pass a
+                // DSVPArray to the (T[], String) constructor, which only
+                // accepts raw arrays. Leave it as a direct assignment — `c`
+                // becomes a second reference to the SAME DSVPArray instance,
+                // which is exactly what `int[] c = arr;` means in plain Java
+                // too (array aliasing, not a copy).
+            } else {
+                // Any other initializer shape that still evaluates to a raw
+                // array — e.g. `int[] cur = pq.poll();` (PriorityQueue<int[]>,
+                // the standard Dijkstra/graph-algorithm pattern), a ternary,
+                // a cast, a call to an un-instrumented helper, etc.
+                // Previously fell through untouched: the declared type still
+                // got rewritten to DSVPArray above, but the initializer
+                // expression was left as a plain array-returning expression,
+                // producing "incompatible types: int[] cannot be converted
+                // to DSVPArray". DSVPArray's (T[], String) constructor wraps
+                // any raw-array-valued expression generically, same as the
+                // ArrayCreationExpr fallback case just above.
+                vd.setInitializer(wrap(init, varName));
             }
         });
     }

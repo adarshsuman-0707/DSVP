@@ -7,5 +7,6 @@ F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\ArrayInstrum
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\QueueFieldInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\QueueInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\CallTraceInstrumentVisitor.java
+F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\GraphInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\Array2DInstrumentVisitor.java
 F:\dotnet\DSVP\backend\src\services\instrumenter\src\main\java\dsvp\LinkedListInstrumentVisitor.java

@@ -3,6 +3,9 @@
    Admin + User management upgrade: status field, payment detail fields,
    audit log, webhook idempotency table, and paginated stored procedures.
    Idempotent — safe to re-run.
+   Target: SQL Server 2008 (detected on this instance) — no CREATE OR ALTER
+   (2016+), no CONCAT() (2012+); uses the create-stub-then-ALTER idiom and
+   string '+' concatenation instead.
    ========================================================================= */
 
 /* ── Users.Status ───────────────────────────────────────────────────── */
@@ -73,9 +76,13 @@ GO
    STORED PROCEDURES
    Every paged proc returns the page rows as its result set and the total
    row count via the @TotalRecords OUTPUT parameter (one round trip).
+   Each is created via a stub-if-missing + ALTER, since this SQL Server
+   version predates CREATE OR ALTER PROCEDURE.
    ========================================================================= */
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetUsersPaged
+IF OBJECT_ID('dbo.sp_GetUsersPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetUsersPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetUsersPaged
   @Page INT, @PageSize INT,
   @Search NVARCHAR(255) = NULL,
   @Role VARCHAR(20) = NULL,
@@ -112,7 +119,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetModulesPaged
+IF OBJECT_ID('dbo.sp_GetModulesPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetModulesPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetModulesPaged
   @Page INT, @PageSize INT,
   @Category VARCHAR(30) = NULL,
   @Search NVARCHAR(255) = NULL,
@@ -149,7 +158,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetPaymentsPaged
+IF OBJECT_ID('dbo.sp_GetPaymentsPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetPaymentsPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetPaymentsPaged
   @Page INT, @PageSize INT,
   @Status VARCHAR(20) = NULL,
   @UserId INT = NULL,
@@ -191,7 +202,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetFeedbackPaged
+IF OBJECT_ID('dbo.sp_GetFeedbackPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetFeedbackPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetFeedbackPaged
   @Page INT, @PageSize INT,
   @Status VARCHAR(20) = NULL,
   @TotalRecords INT OUTPUT
@@ -224,7 +237,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetActivityPaged
+IF OBJECT_ID('dbo.sp_GetActivityPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetActivityPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetActivityPaged
   @Page INT, @PageSize INT,
   @Type VARCHAR(20) = NULL,
   @Search NVARCHAR(255) = NULL,
@@ -243,11 +258,11 @@ BEGIN
     FROM dbo.AnalyticsEvents ae JOIN dbo.Users u ON u.UserId = ae.UserId
     UNION ALL
     SELECT et.TraceId, et.UserId, u.FullName, u.Email,
-           'code_run', CONCAT(et.Language, ' · ', et.Status), et.CreatedAt
+           'code_run', et.Language + ' · ' + et.Status, et.CreatedAt
     FROM dbo.ExecutionTraces et JOIN dbo.Users u ON u.UserId = et.UserId
     UNION ALL
     SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
-           'payment', CONCAT(p.PlanName, ' · ', p.Status, ' · ', p.Currency, ' ', p.Amount), p.CreatedAt
+           'payment', p.PlanName + ' · ' + p.Status + ' · ' + p.Currency + ' ' + CAST(p.Amount AS VARCHAR(20)), p.CreatedAt
     FROM dbo.Payments p JOIN dbo.Users u ON u.UserId = p.UserId
   ),
   Filtered AS (
@@ -264,11 +279,11 @@ BEGIN
     FROM dbo.AnalyticsEvents ae JOIN dbo.Users u ON u.UserId = ae.UserId
     UNION ALL
     SELECT et.TraceId, et.UserId, u.FullName, u.Email,
-           'code_run', CONCAT(et.Language, ' · ', et.Status), et.CreatedAt
+           'code_run', et.Language + ' · ' + et.Status, et.CreatedAt
     FROM dbo.ExecutionTraces et JOIN dbo.Users u ON u.UserId = et.UserId
     UNION ALL
     SELECT p.PaymentId, p.UserId, u.FullName, u.Email,
-           'payment', CONCAT(p.PlanName, ' · ', p.Status, ' · ', p.Currency, ' ', p.Amount), p.CreatedAt
+           'payment', p.PlanName + ' · ' + p.Status + ' · ' + p.Currency + ' ' + CAST(p.Amount AS VARCHAR(20)), p.CreatedAt
     FROM dbo.Payments p JOIN dbo.Users u ON u.UserId = p.UserId
   ),
   Filtered AS (
@@ -285,7 +300,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetAuditLogsPaged
+IF OBJECT_ID('dbo.sp_GetAuditLogsPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetAuditLogsPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetAuditLogsPaged
   @Page INT, @PageSize INT,
   @Search NVARCHAR(255) = NULL,
   @TotalRecords INT OUTPUT
@@ -317,7 +334,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_GetSubmissionsPaged
+IF OBJECT_ID('dbo.sp_GetSubmissionsPaged') IS NULL EXEC('CREATE PROCEDURE dbo.sp_GetSubmissionsPaged AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_GetSubmissionsPaged
   @Page INT, @PageSize INT,
   @UserId INT = NULL,
   @Status VARCHAR(20) = NULL,
@@ -352,7 +371,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_UpdateUserStatus
+IF OBJECT_ID('dbo.sp_UpdateUserStatus') IS NULL EXEC('CREATE PROCEDURE dbo.sp_UpdateUserStatus AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_UpdateUserStatus
   @UserId INT, @Status VARCHAR(20)
 AS
 BEGIN
@@ -361,7 +382,9 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE dbo.sp_InsertAuditLog
+IF OBJECT_ID('dbo.sp_InsertAuditLog') IS NULL EXEC('CREATE PROCEDURE dbo.sp_InsertAuditLog AS SELECT 1');
+GO
+ALTER PROCEDURE dbo.sp_InsertAuditLog
   @AdminId INT, @Action VARCHAR(50), @TargetType VARCHAR(30),
   @TargetId INT = NULL, @Description NVARCHAR(500) = NULL, @IPAddress VARCHAR(64) = NULL
 AS

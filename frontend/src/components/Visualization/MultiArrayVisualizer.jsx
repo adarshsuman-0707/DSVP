@@ -22,6 +22,8 @@ export default function MultiArrayVisualizer({
   activeIndex   = null,
   secondIndex   = null,
   type          = 'highlight',
+  locals        = null,     // { varName: value, ... } — every live local at this step
+  theme         = 'dark',
 }) {
   if (arrays.length <= 1) {
     return (
@@ -34,22 +36,26 @@ export default function MultiArrayVisualizer({
         step={step}
         totalSteps={totalSteps}
         userOutput={userOutput}
+        locals={locals}
+        theme={theme}
       />
     );
   }
 
+  const pal = PALETTE[theme] || PALETTE.dark;
+
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100%',
-      background: '#0d1117', overflow: 'hidden',
+      background: pal.bg, overflow: 'hidden',
     }}>
       {arrays.map((arr, i) => (
         <div
           key={arr.name}
           style={{
             flex: 1, minHeight: 0,
-            borderBottom: i < arrays.length - 1 ? '1px solid rgba(255,255,255,.09)' : 'none',
-            outline: arr.name === activeArrayVar ? '2px solid rgba(96,165,250,.5)' : 'none',
+            borderBottom: i < arrays.length - 1 ? `1px solid ${pal.hairline}` : 'none',
+            outline: arr.name === activeArrayVar ? `2px solid ${pal.outline}` : 'none',
             outlineOffset: -2,
             transition: 'outline 150ms',
           }}
@@ -64,9 +70,16 @@ export default function MultiArrayVisualizer({
             step={step}
             totalSteps={totalSteps}
             userOutput={i === arrays.length - 1 ? userOutput : ''}
+            locals={locals}
+            theme={theme}
           />
         </div>
       ))}
     </div>
   );
 }
+
+const PALETTE = {
+  dark:  { bg: '#0d1117', hairline: 'rgba(255,255,255,.09)', outline: 'rgba(96,165,250,.5)' },
+  light: { bg: '#ffffff', hairline: '#e2e8f0',               outline: '#2563eb' },
+};

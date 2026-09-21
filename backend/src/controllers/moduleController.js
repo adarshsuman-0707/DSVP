@@ -1,45 +1,45 @@
 const ModuleModel = require('../models/moduleModel');
+const UserModel = require('../models/userModel');
+const CoinModel = require('../models/coinModel');
+
+const PLAN_RANK = { free: 0, basic: 1, premium: 2 };
+
+/**
+ * A user's plan unlocks every module at or below its tier (free < basic <
+ * premium) — that's the whole point of paying for a plan. `premiumAccess`
+ * is an optional admin-granted allowlist for one-off module grants on top
+ * of whatever plan the user has. `coinUnlockedIds` is the coin-store
+ * equivalent — a temporary (7-day) grant a user bought with coins instead
+ * of upgrading their plan — neither replaces the plan check.
+ */
+function hasModuleAccess({ userRole, userPlan, premiumAccess, coinUnlockedIds, module }) {
+  if (userRole === 'admin') return true;
+  const requiredPlan = module.RequiredPlan || 'free';
+  const byPlan = (PLAN_RANK[userPlan] ?? 0) >= (PLAN_RANK[requiredPlan] ?? 0);
+  const byGrant = premiumAccess.includes(module.ModuleId);
+  const byCoins = coinUnlockedIds.has(module.ModuleId);
+  return byPlan || byGrant || byCoins;
+}
 
 async function listModules(req, res, next) {
   try {
     const filter = req.query.filter || 'all'; // all | free | premium
-    const userId = req.user?.userId;
     const userRole = req.user?.role;
     const userPlan = req.user?.subscriptionPlan || 'free';
     const premiumAccess = req.user?.premiumModulesAccess || [];
-    
-    const modules = await ModuleModel.listModules({ filter });
-    
-    // Add HasAccess flag to each module based on user's subscription
-    const modulesWithAccess = modules.map(m => {
-      // Admin always has full access
-      if (userRole === 'admin') {
-        return { ...m, HasAccess: true };
-      }
-      
-      // Check RequiredPlan (strict enforcement)
-      const requiredPlan = m.RequiredPlan || 'free';
-      let hasAccess = false;
-      
-      if (requiredPlan === 'free') {
-        // Free modules accessible to everyone
-        hasAccess = true;
-      } else if (requiredPlan === 'basic') {
-        // Basic tier modules require basic or premium plan
-        hasAccess = (userPlan === 'basic' || userPlan === 'premium');
-      } else if (requiredPlan === 'premium') {
-        // Premium tier modules ONLY for premium plan
-        hasAccess = (userPlan === 'premium');
-      }
-      
-      // For basic plan users, also check if module is in their access list
-      if (userPlan === 'basic' && m.IsPremium && !premiumAccess.includes(m.ModuleId)) {
-        hasAccess = false;
-      }
-      
-      return { ...m, HasAccess: hasAccess };
-    });
-    
+
+    const [modules, coinUnlocks] = await Promise.all([
+      ModuleModel.listModules({ filter }),
+      req.user?.userId ? CoinModel.getActiveModuleUnlocks(req.user.userId) : Promise.resolve([]),
+    ]);
+    const coinUnlockedIds = new Set(coinUnlocks.map(u => u.ModuleId));
+
+    const modulesWithAccess = modules.map(m => ({
+      ...m,
+      HasAccess: hasModuleAccess({ userRole, userPlan, premiumAccess, coinUnlockedIds, module: m }),
+      CoinUnlockExpiresAt: coinUnlocks.find(u => u.ModuleId === m.ModuleId)?.ExpiresAt || null,
+    }));
+
     res.json({ modules: modulesWithAccess });
   } catch (err) {
     next(err);
@@ -51,44 +51,26 @@ async function getModule(req, res, next) {
     const module = await ModuleModel.getBySlug(req.params.slug);
     if (!module) return res.status(404).json({ message: 'Module not found' });
 
-    // Check if user has access to this module (STRICT enforcement)
     const userRole = req.user?.role;
     const userPlan = req.user?.subscriptionPlan || 'free';
     const premiumAccess = req.user?.premiumModulesAccess || [];
     const requiredPlan = module.RequiredPlan || 'free';
-    
-    let hasAccess = false;
-    
-    // Admin always has access
-    if (userRole === 'admin') {
-      hasAccess = true;
-    } 
-    // Free modules accessible to all
-    else if (requiredPlan === 'free') {
-      hasAccess = true;
-    }
-    // Basic tier requires basic or premium plan
-    else if (requiredPlan === 'basic') {
-      if (userPlan === 'basic') {
-        // For basic plan, check if module is in their access list
-        hasAccess = premiumAccess.includes(module.ModuleId);
-      } else if (userPlan === 'premium') {
-        hasAccess = true;
-      }
-    }
-    // Premium tier ONLY for premium plan
-    else if (requiredPlan === 'premium') {
-      hasAccess = (userPlan === 'premium');
-    }
 
-    if (!hasAccess) {
-      return res.status(403).json({ 
-        message: `This module requires ${requiredPlan} plan`, 
-        locked: true, 
+    const coinUnlocks = req.user?.userId ? await CoinModel.getActiveModuleUnlocks(req.user.userId) : [];
+    const coinUnlockedIds = new Set(coinUnlocks.map(u => u.ModuleId));
+
+    if (!hasModuleAccess({ userRole, userPlan, premiumAccess, coinUnlockedIds, module })) {
+      return res.status(403).json({
+        message: `This module requires ${requiredPlan} plan`,
+        locked: true,
         requiredPlan,
         currentPlan: userPlan,
-        module 
+        module
       });
+    }
+
+    if (req.user?.userId) {
+      UserModel.logEvent(req.user.userId, 'module_viewed', { moduleId: module.ModuleId, slug: module.Slug }).catch(() => {});
     }
 
     res.json({ module });

@@ -1,6 +1,7 @@
 const { sql, getPool } = require('../config/db');
 const { runCode }         = require('../services/compilerService');
 const { buildTraceEvents } = require('../services/traceGeneratorService');
+const CoinModel = require('../models/coinModel');
 
 /**
  * POST /api/execution/run
@@ -88,6 +89,20 @@ async function runAndTrace(req, res, next) {
         `);
     } catch (dbErr) {
       console.error('[executionController] DB persist failed (non-fatal):', dbErr.message);
+    }
+
+    // First clean (error-free) run of THIS module earns a one-time bonus —
+    // dedup key is the module slug itself, so re-running the same module
+    // doesn't farm coins, but trying a new module each time does.
+    if (moduleSlug) {
+      try {
+        const already = await CoinModel.hasEarnedFor(req.user.userId, 'module_complete', moduleSlug);
+        if (!already) {
+          await CoinModel.earn(req.user.userId, 10, 'module_complete', moduleSlug);
+        }
+      } catch (coinErr) {
+        console.error('[executionController] coin award failed (non-fatal):', coinErr.message);
+      }
     }
 
     /* ── 5. Respond ── */

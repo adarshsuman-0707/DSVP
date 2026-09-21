@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import CodeEditor from '../components/Editor/CodeEditor';
 import VisualizationCanvas from '../components/Visualization/VisualizationCanvas';
 import PlaybackBar from '../components/PlaybackBar/PlaybackBar';
@@ -400,6 +400,113 @@ print("Inorder traversal:", result)
 
         System.out.println("Found 60: " + search(root, 60));
         System.out.println("Found 99: " + search(root, 99));
+    }
+}
+`,
+  },
+
+  'graph': {
+    python: `# Graph (BFS + DFS) — DSVP auto-detects your adjacency-list graph!
+# Just use a plain dict of node -> list of neighbors, a "visited" set,
+# and a queue (BFS) or stack (DFS) — no special API needed.
+
+from collections import deque
+
+def bfs(graph, start):
+    visited = set()
+    queue = deque([start])
+    visited.add(start)
+    order = []
+    while queue:
+        node = queue.popleft()
+        order.append(node)
+        for nb in graph[node]:
+            if nb not in visited:
+                visited.add(nb)
+                queue.append(nb)
+    return order
+
+def dfs(graph, start):
+    visited = set()
+    stack = [start]
+    order = []
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        order.append(node)
+        for nb in graph[node]:
+            if nb not in visited:
+                stack.append(nb)
+    return order
+
+# Build the adjacency list one edge at a time (not as one big dict
+# literal) so DSVP can animate the graph actually being CONSTRUCTED,
+# edge by edge, instead of it appearing all at once. Cycle: 0-1-3-2-0.
+graph = {0: [], 1: [], 2: [], 3: [], 4: []}
+edges = [(0, 1), (0, 2), (1, 3), (2, 3), (3, 4)]
+for u, v in edges:
+    graph[u].append(v)
+    graph[v].append(u)
+
+print("BFS from 0:", bfs(graph, 0))
+print("DFS from 0:", dfs(graph, 0))
+`,
+    java: `import java.util.*;
+
+public class Main {
+
+    static List<Integer> bfs(Map<Integer, List<Integer>> graph, int start) {
+        Set<Integer> visited = new HashSet<>();
+        Deque<Integer> queue = new ArrayDeque<>();
+        queue.add(start);
+        visited.add(start);
+        List<Integer> order = new ArrayList<>();
+
+        while (!queue.isEmpty()) {
+            int node = queue.poll();
+            order.add(node);
+            for (int nb : graph.get(node)) {
+                if (!visited.contains(nb)) {
+                    visited.add(nb);
+                    queue.add(nb);
+                }
+            }
+        }
+        return order;
+    }
+
+    static List<Integer> dfs(Map<Integer, List<Integer>> graph, int start) {
+        Set<Integer> visited = new HashSet<>();
+        Deque<Integer> stack = new ArrayDeque<>();
+        stack.push(start);
+        List<Integer> order = new ArrayList<>();
+
+        while (!stack.isEmpty()) {
+            int node = stack.pop();
+            if (visited.contains(node)) continue;
+            visited.add(node);
+            order.add(node);
+            for (int nb : graph.get(node)) {
+                if (!visited.contains(nb)) {
+                    stack.push(nb);
+                }
+            }
+        }
+        return order;
+    }
+
+    public static void main(String[] args) {
+        Map<Integer, List<Integer>> graph = new HashMap<>();
+        graph.put(0, Arrays.asList(1, 2));
+        graph.put(1, Arrays.asList(0, 3));
+        graph.put(2, Arrays.asList(0, 3));
+        graph.put(3, Arrays.asList(1, 2, 4));
+        graph.put(4, Arrays.asList(3));
+
+        System.out.println("BFS from 0: " + bfs(graph, 0));
+        System.out.println("DFS from 0: " + dfs(graph, 0));
     }
 }
 `,
@@ -916,7 +1023,11 @@ const MODULE_ICONS = {
 export default function Workspace() {
   const [searchParams]                  = useSearchParams();
   const navigate                        = useNavigate();
-  const initialSlug                     = searchParams.get('module') || 'array';
+  const location                        = useLocation();
+  // Opened from Saved Snippets ("Open" button) — carries the actual saved
+  // code/language/module, taking priority over the ?module= starter template.
+  const loadedSnippet                   = location.state?.loadedSnippet;
+  const initialSlug                     = loadedSnippet?.ModuleSlug || searchParams.get('module') || 'array';
   // Modules loaded from API
   const [allModules, setAllModules]     = useState([]);
 
@@ -925,9 +1036,20 @@ export default function Workspace() {
     getModules('all').then(res => setAllModules(res.data.modules || [])).catch(() => {});
   }, []);
 
-  const [language, setLanguage]         = useState('python');
+  const [language, setLanguage]         = useState(() => loadedSnippet?.Language || 'python');
   const [moduleSlug, setModuleSlug]     = useState(initialSlug);
-  const [code, setCode] = useState(() => STARTER[initialSlug]?.['python'] || STARTER['array']['python']);
+  const [code, setCode] = useState(() =>
+    loadedSnippet?.Code ?? (STARTER[initialSlug]?.[loadedSnippet?.Language || 'python'] || STARTER['array']['python'])
+  );
+
+  // Clear the router state once consumed so navigating back/forward or
+  // refreshing doesn't keep re-applying the same snippet over local edits.
+  useEffect(() => {
+    if (loadedSnippet) {
+      navigate(location.pathname + location.search, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [events, setEvents]             = useState([]);
   const [stepIndex, setStepIndex]       = useState(0);
   const [isPlaying, setIsPlaying]       = useState(false);
@@ -955,8 +1077,8 @@ export default function Workspace() {
   const loadHistory = useCallback(async () => {
     try {
       setLoadingHistory(true);
-      const res = await getCodeHistory({ moduleSlug, limit: 50 });
-      setHistory(res.data.history || []);
+      const res = await getCodeHistory({ moduleSlug, page: 1, pageSize: 50 });
+      setHistory(res.data.data || []);
     } catch (err) {
       console.error('Failed to load history:', err);
     } finally {
@@ -1196,13 +1318,11 @@ export default function Workspace() {
             value={moduleSlug}
             onChange={e => {
                 const slug = e.target.value;
-                // Block if premium and no access — must match ModuleCatalog's
-                // logic (m.HasAccess), not a blanket user.IsPremium check,
-                // otherwise a module unlocked on the Dashboard (e.g. via a
-                // plan that grants access to specific modules) would still
-                // show locked here.
+                // Block if the server says this plan can't access it — driven
+                // purely by HasAccess (RequiredPlan vs. the user's plan), not
+                // a separate IsPremium flag which can drift out of sync.
                 const mod = allModules.find(m => m.Slug === slug);
-                if (mod && mod.IsPremium && !mod.HasAccess) {
+                if (mod && !mod.HasAccess) {
                   navigate('/pricing');
                   return;
                 }
@@ -1219,11 +1339,12 @@ export default function Workspace() {
               ))
             ) : (
               allModules.map(m => {
-                const locked = m.IsPremium && !m.HasAccess;
+                const locked = !m.HasAccess;
                 const icon   = MODULE_ICONS[m.Slug] || '◈';
+                const tierLabel = m.RequiredPlan ? m.RequiredPlan[0].toUpperCase() + m.RequiredPlan.slice(1) : 'Premium';
                 return (
                   <option key={m.Slug} value={m.Slug}>
-                    {locked ? '🔒 ' : icon + ' '}{m.Name}{locked ? ' (Premium)' : ''}
+                    {locked ? '🔒 ' : icon + ' '}{m.Name}{locked ? ` (${tierLabel})` : ''}
                   </option>
                 );
               })
@@ -1370,6 +1491,7 @@ export default function Workspace() {
           allEvents={events}
           currentStep={stepIndex}
           resetKey={runResetKey}
+          theme={theme}
         />
 
         {/* History sidebar */}
@@ -1534,10 +1656,10 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
   );
 }
 
-function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey }) {
+function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey, theme = 'dark' }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      <PanelLabel>Visualization</PanelLabel>
+      <PanelLabel theme={theme}>Visualization</PanelLabel>
       <div style={{ flex: 1, minHeight: 0 }}>
         <VisualizationCanvas
           key={`${moduleSlug}-${resetKey}`}
@@ -1546,6 +1668,7 @@ function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, c
           totalSteps={totalSteps}
           allEvents={allEvents}
           currentStep={currentStep + 1}
+          theme={theme}
         />
       </div>
     </div>

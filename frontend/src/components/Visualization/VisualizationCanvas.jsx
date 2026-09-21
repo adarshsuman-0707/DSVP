@@ -5,8 +5,14 @@ import LinkedListVisualizer   from './LinkedListVisualizer';
 import StackVisualizer        from './StackVisualizer';
 import QueueVisualizer        from './QueueVisualizer';
 import BSTVisualizer          from './BSTVisualizer';
+import GraphVisualizer        from './GraphVisualizer';
 import CallStackPanel         from './CallStackPanel';
 import ExecutionHistoryPanel  from './ExecutionHistoryPanel';
+
+const CANVAS_THEME = {
+  dark:  { bg: '#0d1117', panelBg: '#161b22', border: 'rgba(255,255,255,.08)', text: '#e6edf3', textMuted: '#8b949e' },
+  light: { bg: '#ffffff', panelBg: '#f6f8fa', border: '#d0d7de',               text: '#1e293b', textMuted: '#64748b' },
+};
 
 const ARRAY2D_EVENT_TYPES = new Set(['init2d', 'read2d', 'write2d']);
 
@@ -62,6 +68,17 @@ function isBSTModule(slug) {
   return slug === 'bst';
 }
 
+/* ── helper: is this event a Graph event? ── */
+const GRAPH_EVENT_TYPES = new Set(['graph_init', 'graph_step', 'graph_build']);
+
+function isGraphEvent(event) {
+  return event && GRAPH_EVENT_TYPES.has(event.type);
+}
+
+function isGraphModule(slug) {
+  return slug === 'graph';
+}
+
 /**
  * VisualizationCanvas
  * ────────────────────
@@ -69,7 +86,8 @@ function isBSTModule(slug) {
  * and shows CallStackPanel + ExecutionHistoryPanel (right panel).
  * Both horizontal (left/right) and vertical (call stack/history) resizing!
  */
-export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0 }) {
+export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0, theme = 'dark' }) {
+  const palette = CANVAS_THEME[theme] || CANVAS_THEME.dark;
   const [rightPanelWidth, setRightPanelWidth] = useState(320);
   const [callStackHeight, setCallStackHeight] = useState(300);
   const [isResizingH, setIsResizingH] = useState(false);
@@ -126,6 +144,16 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
   const lastGrid2DTypeRef   = useRef('highlight');
   const lastGrid2DDescRef   = useRef('');
   const lastGrid2DOutputRef = useRef('');
+  // Dedicated sticky refs for Graph — separate from BST/LL so switching
+  // modules doesn't bleed state across visualizers
+  const lastGraphNodesRef    = useRef([]);
+  const lastGraphEdgesRef    = useRef([]);
+  const lastGraphVisitedRef  = useRef([]);
+  const lastGraphFrontierRef = useRef([]);
+  const lastGraphActiveRef   = useRef(null);
+  const lastGraphTypeRef     = useRef('graph_init');
+  const lastGraphDescRef     = useRef('');
+  const lastGraphOutputRef   = useRef('');
 
   /* Update sticky refs whenever the current event carries fresh data.
      Using useEffect to avoid mutating refs during render (React rule). */
@@ -197,6 +225,17 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
       lastBSTTypeRef.current    = event.type             ?? 'bst_snap';
       lastBSTDescRef.current    = isExecEvent(event.type) ? '' : (event.description ?? '');
       lastBSTOutputRef.current  = event.userOutput       ?? '';
+    }
+
+    if (event.graphNodes !== undefined) {
+      lastGraphNodesRef.current    = event.graphNodes    ?? [];
+      lastGraphEdgesRef.current    = event.graphEdges    ?? [];
+      lastGraphVisitedRef.current  = event.graphVisited  ?? [];
+      lastGraphFrontierRef.current = event.graphFrontier ?? [];
+      lastGraphActiveRef.current   = event.activeGraphNodeId ?? null;
+      lastGraphTypeRef.current     = event.type ?? 'graph_init';
+      lastGraphDescRef.current     = isExecEvent(event.type) ? '' : (event.description ?? '');
+      lastGraphOutputRef.current   = event.userOutput ?? '';
     }
 
     // grid2dState is on every event once a 2D array exists (carries last
@@ -298,6 +337,13 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
     return false;
   }, [moduleSlug, allEvents, event]);
 
+  const isGraphSession = useMemo(() => {
+    if (isGraphModule(moduleSlug)) return true;
+    if (allEvents.some(e => isGraphEvent(e) || (e.graphNodes && e.graphNodes.length > 0))) return true;
+    if (isGraphEvent(event)) return true;
+    return false;
+  }, [moduleSlug, allEvents, event]);
+
   if (!event) {
     return (
       <div 
@@ -306,17 +352,19 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
       >
         <div style={{ flex: 1 }}>
           {isLLSession ? (
-            <LinkedListVisualizer linkedListState={[]} isDoubly={isDoublySession} />
+            <LinkedListVisualizer linkedListState={[]} isDoubly={isDoublySession} theme={theme} />
           ) : isBSTSession ? (
-            <BSTVisualizer treeState={[]} />
+            <BSTVisualizer treeState={[]} theme={theme} />
+          ) : isGraphSession ? (
+            <GraphVisualizer graphNodes={[]} theme={theme} />
           ) : isStackSession ? (
-            <StackVisualizer stackState={[]} />
+            <StackVisualizer stackState={[]} theme={theme} />
           ) : isQueueSession ? (
-            <QueueVisualizer queueState={[]} />
+            <QueueVisualizer queueState={[]} theme={theme} />
           ) : isArray2DSession ? (
-            <Grid2DVisualizer grid2dState={[]} />
+            <Grid2DVisualizer grid2dState={[]} theme={theme} />
           ) : (
-            <NoEventState moduleSlug={moduleSlug} />
+            <NoEventState moduleSlug={moduleSlug} theme={theme} />
           )}
         </div>
 
@@ -326,7 +374,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
           style={{
             width: 4,
             cursor: 'col-resize',
-            background: isResizingH ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
+            background: isResizingH ? 'rgba(76,175,80,.5)' : palette.border,
             transition: isResizingH ? 'none' : 'background 150ms ease',
             position: 'relative',
             flexShrink: 0,
@@ -345,7 +393,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 12,
-            color: '#8b949e',
+            color: palette.textMuted,
           }}>
             ⋮
           </div>
@@ -363,23 +411,24 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
               changedVars={[]}
               type=""
               description=""
+              theme={theme}
             />
           </div>
-          
+
           {/* Vertical Resize Handle */}
           <div
             onMouseDown={() => setIsResizingV(true)}
             style={{
               height: 4,
               cursor: 'row-resize',
-              background: isResizingV ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+              background: isResizingV ? 'rgba(76,175,80,.5)' : palette.border,
               transition: isResizingV ? 'none' : 'background 150ms ease',
               flexShrink: 0,
             }}
           />
-          
+
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <ExecutionHistoryPanel events={[]} currentStep={0} />
+            <ExecutionHistoryPanel events={[]} currentStep={0} theme={theme} />
           </div>
         </div>
       </div>
@@ -406,6 +455,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             totalSteps={totalSteps ?? 0}
             userOutput={lastLLOutputRef.current}
             isDoubly={isDoublySession}
+            theme={theme}
           />
         ) : isBSTSession ? (
           <BSTVisualizer
@@ -416,6 +466,21 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
             userOutput={lastBSTOutputRef.current}
+            theme={theme}
+          />
+        ) : isGraphSession ? (
+          <GraphVisualizer
+            graphNodes={lastGraphNodesRef.current}
+            graphEdges={lastGraphEdgesRef.current}
+            graphVisited={lastGraphVisitedRef.current}
+            graphFrontier={lastGraphFrontierRef.current}
+            activeNodeId={lastGraphActiveRef.current}
+            type={lastGraphTypeRef.current}
+            description={lastGraphDescRef.current}
+            step={event.step       ?? 0}
+            totalSteps={totalSteps ?? 0}
+            userOutput={lastGraphOutputRef.current}
+            theme={theme}
           />
         ) : isStackSession ? (
           <StackVisualizer
@@ -426,6 +491,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
             userOutput={lastStackOutputRef.current}
+            theme={theme}
           />
         ) : isQueueSession ? (
           <QueueVisualizer
@@ -436,6 +502,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
             userOutput={lastQueueOutputRef.current}
+            theme={theme}
           />
         ) : isArray2DSession ? (
           <Grid2DVisualizer
@@ -447,6 +514,8 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
             userOutput={lastGrid2DOutputRef.current}
+            locals={event.locals   ?? null}
+            theme={theme}
           />
         ) : (
           <MultiArrayVisualizer
@@ -460,6 +529,8 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
             userOutput={lastArrOutputRef.current}
+            locals={event.locals   ?? null}
+            theme={theme}
           />
         )}
       </div>
@@ -470,7 +541,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
         style={{
           width: 4,
           cursor: 'col-resize',
-          background: isResizingH ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.08)',
+          background: isResizingH ? 'rgba(76,175,80,.5)' : palette.border,
           transition: isResizingH ? 'none' : 'background 150ms ease',
           position: 'relative',
           flexShrink: 0,
@@ -490,14 +561,14 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
           alignItems: 'center',
           justifyContent: 'center',
           fontSize: 12,
-          color: '#8b949e',
+          color: palette.textMuted,
         }}>
           ⋮
         </div>
       </div>
 
       {/* ── Right: call stack + execution history ── */}
-      <div ref={rightPanelRef} style={{ width: rightPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+      <div ref={rightPanelRef} style={{ width: rightPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', background: palette.panelBg }}>
         <div style={{ height: callStackHeight, overflow: 'hidden' }}>
           <CallStackPanel
             callStack={event.callStack           ?? []}
@@ -509,24 +580,25 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             changedVars={event.changedVars       ?? []}
             type={event.type                     ?? ''}
             description={event.description       ?? ''}
+            theme={theme}
           />
         </div>
-        
+
         {/* Vertical Resize Handle */}
         <div
           onMouseDown={() => setIsResizingV(true)}
           style={{
             height: 4,
             cursor: 'row-resize',
-            background: isResizingV ? 'rgba(76,175,80,.5)' : 'rgba(255,255,255,.07)',
+            background: isResizingV ? 'rgba(76,175,80,.5)' : palette.border,
             transition: isResizingV ? 'none' : 'background 150ms ease',
             flexShrink: 0,
             zIndex: 10,
           }}
         />
-        
+
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <ExecutionHistoryPanel events={allEvents} currentStep={currentStep} />
+          <ExecutionHistoryPanel events={allEvents} currentStep={currentStep} theme={theme} />
         </div>
       </div>
     </div>
@@ -541,33 +613,37 @@ const MODULE_META = {
   'queue':       { icon: '🚦', label: 'Queue'       },
 };
 
-function NoEventState({ moduleSlug }) {
+function NoEventState({ moduleSlug, theme = 'dark' }) {
   const meta = MODULE_META[moduleSlug] || { icon: '◈', label: 'Structure' };
+  const palette = CANVAS_THEME[theme] || CANVAS_THEME.dark;
+  const isLight = theme === 'light';
+  const softBg = isLight ? 'rgba(15,23,42,.04)' : 'rgba(255,255,255,.04)';
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: '100%', background: '#0d1117',
+      height: '100%', background: palette.bg,
       fontFamily: "'Inter', system-ui, sans-serif",
       gap: 16, padding: 32,
     }}>
       <div style={{
         width: 64, height: 64, borderRadius: 16,
-        background: 'rgba(255,255,255,.04)',
-        border: '1.5px solid rgba(255,255,255,.08)',
+        background: softBg,
+        border: `1.5px solid ${palette.border}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 30,
       }}>{meta.icon}</div>
 
       <div style={{ textAlign: 'center' }}>
-        <p style={{ color: '#e6edf3', fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+        <p style={{ color: palette.text, fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
           {meta.label} Visualizer
         </p>
-        <p style={{ color: '#8b949e', fontSize: 13, lineHeight: 1.65, maxWidth: 300 }}>
+        <p style={{ color: palette.textMuted, fontSize: 13, lineHeight: 1.65, maxWidth: 300 }}>
           Write your code in the editor, then hit{' '}
           <span style={{
             display: 'inline-block', padding: '1px 8px', borderRadius: 4,
-            background: 'rgba(76,175,80,.15)', color: '#86efac',
+            background: isLight ? 'rgba(22,163,74,.14)' : 'rgba(76,175,80,.15)',
+            color: isLight ? '#15803d' : '#86efac',
             fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
           }}>▶ Run</span>{' '}
           to see the step-by-step animation here.
@@ -579,9 +655,9 @@ function NoEventState({ moduleSlug }) {
         {getHints(moduleSlug).map(h => (
           <div key={h} style={{
             padding: '6px 12px', borderRadius: 8,
-            background: 'rgba(255,255,255,.04)',
-            border: '1px solid rgba(255,255,255,.08)',
-            fontSize: 12, color: '#8b949e',
+            background: softBg,
+            border: `1px solid ${palette.border}`,
+            fontSize: 12, color: palette.textMuted,
             fontFamily: "'JetBrains Mono', monospace",
           }}>{h}</div>
         ))}

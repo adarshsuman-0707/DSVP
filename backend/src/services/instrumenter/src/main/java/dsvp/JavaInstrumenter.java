@@ -117,6 +117,14 @@ public class JavaInstrumenter {
             QueueFieldInstrumentVisitor queueFieldPass = new QueueFieldInstrumentVisitor();
             queueFieldPass.visit(cu, null);
 
+            // Weighted adjacency-list graphs (List<List<EdgeClass>> +
+            // PriorityQueue<int[]>, the standard Dijkstra shape) — must run
+            // before ArrayInstrumentVisitor, which would otherwise wrap
+            // `int[] current = pq.poll();` into a DSVPArray and hide the
+            // `pq.poll()` MethodCallExpr shape this pass pattern-matches on.
+            GraphInstrumentVisitor graphPass = new GraphInstrumentVisitor();
+            graphPass.visit(cu, null);
+
             // int[][]/char[][] locals -> DSVPArray2DInt/Char. Also must run
             // before CallTraceInstrumentVisitor for the same reason as above
             // (a `return grid[i][j];` shape).

@@ -86,6 +86,53 @@ function getFwdMarkerId(isActive, type) {
 /* ══════════════════════════════════════════════════════
    Main Component
    ══════════════════════════════════════════════════════ */
+const PALETTE = {
+  dark: {
+    bg: '#090d16',
+    bgImage: 'radial-gradient(circle at 50% 0%, rgba(30, 58, 138, 0.15) 0%, transparent 70%), radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
+    headerBg: 'rgba(15, 23, 42, 0.75)', hairline: 'rgba(255,255,255,.08)',
+    text: '#f8fafc', textMuted: '#94a3b8', textFaint: '#475569', textDim: '#64748b',
+    badgeBg: 'linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(139, 92, 246, 0.2))',
+    badgeBorder: 'rgba(96, 165, 250, 0.3)', badgeText: '#e2e8f0',
+    btnBg: 'rgba(255,255,255,0.05)', btnBorder: 'rgba(255,255,255,0.1)', btnText: '#94a3b8', btnTextDisabled: '#475569',
+    zoomText: '#cbd5e1',
+    descBg: 'rgba(15, 23, 42, 0.7)', descBorder: 'rgba(255, 255, 255, 0.08)',
+    addrPillBg: 'rgba(255,255,255,0.06)',
+    cardBg: 'linear-gradient(160deg, #131b2e 0%, #0d121f 100%)',
+    inactiveBorder: 'rgba(255,255,255,0.12)', inactiveHeaderBg: 'rgba(255, 255, 255, 0.04)',
+    inactiveVal: '#f1f5f9', inactiveLabel: '#64748b', inactivePtr: '#94a3b8',
+    addrChipBg: 'rgba(0,0,0,0.3)', addrChipText: '#64748b', addrChipActiveBg: 'rgba(255,255,255,0.15)',
+    idxBadgeBg: 'rgba(255,255,255,0.06)', idxBadgeBorder: 'rgba(255,255,255,0.1)', idxBadgeText: '#475569',
+    inactiveArrow: 'rgba(148, 163, 184, 0.4)', arrowLabelInactive: '#475569',
+    consoleBg: '#040711', consoleText: '#f8fafc',
+    emptyBg: 'rgba(15, 23, 42, 0.4)', emptyBorder: 'rgba(255, 255, 255, 0.07)',
+    codeChipBg: 'rgba(255,255,255,0.04)', codeChipBorder: 'rgba(255,255,255,0.08)', codeChipText: '#cbd5e1',
+    snakeTurnDefault: 'rgba(255,255,255,0.2)',
+  },
+  light: {
+    bg: '#ffffff',
+    bgImage: 'radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.06) 0%, transparent 70%), radial-gradient(rgba(15, 23, 42, 0.035) 1px, transparent 1px)',
+    headerBg: 'rgba(255, 255, 255, 0.9)', hairline: '#e2e8f0',
+    text: '#0f172a', textMuted: '#475569', textFaint: '#94a3b8', textDim: '#64748b',
+    badgeBg: 'linear-gradient(135deg, rgba(37, 99, 235, 0.12), rgba(139, 92, 246, 0.12))',
+    badgeBorder: 'rgba(37, 99, 235, 0.25)', badgeText: '#1e293b',
+    btnBg: '#f6f8fa', btnBorder: '#d0d7de', btnText: '#475569', btnTextDisabled: '#94a3b8',
+    zoomText: '#334155',
+    descBg: '#f6f8fa', descBorder: '#d0d7de',
+    addrPillBg: '#eef1f5',
+    cardBg: 'linear-gradient(160deg, #ffffff 0%, #f6f8fa 100%)',
+    inactiveBorder: '#d0d7de', inactiveHeaderBg: '#f6f8fa',
+    inactiveVal: '#1e293b', inactiveLabel: '#64748b', inactivePtr: '#475569',
+    addrChipBg: '#e2e8f0', addrChipText: '#475569', addrChipActiveBg: 'rgba(255,255,255,0.6)',
+    idxBadgeBg: '#eef1f5', idxBadgeBorder: '#d0d7de', idxBadgeText: '#64748b',
+    inactiveArrow: '#94a3b8', arrowLabelInactive: '#94a3b8',
+    consoleBg: '#f6f8fa', consoleText: '#1e293b',
+    emptyBg: '#f8fafc', emptyBorder: '#e2e8f0',
+    codeChipBg: '#f0f2f5', codeChipBorder: '#d0d7de', codeChipText: '#334155',
+    snakeTurnDefault: '#cbd5e1',
+  },
+};
+
 export default function LinkedListVisualizer({
   linkedListState = [],
   activeNodeId    = -1,
@@ -95,7 +142,9 @@ export default function LinkedListVisualizer({
   totalSteps      = 0,
   userOutput      = '',
   isDoubly: isDoublyProp = false,
+  theme           = 'dark',
 }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
   const [flashSet, setFlashSet]           = useState(new Set());
   const prevStateRef                       = useRef([]);
   const isDoublyStickyRef                 = useRef(false);
@@ -184,8 +233,8 @@ export default function LinkedListVisualizer({
       ref={containerRef}
       style={{
         display: 'flex', flexDirection: 'column', height: '100%',
-        background: '#090d16',
-        backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(30, 58, 138, 0.15) 0%, transparent 70%), radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
+        background: pal.bg,
+        backgroundImage: pal.bgImage,
         backgroundSize: '100% 100%, 20px 20px',
         fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
         overflow: 'hidden', userSelect: resizing ? 'none' : 'auto',
@@ -199,10 +248,10 @@ export default function LinkedListVisualizer({
       <header style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 18px',
-        background: 'rgba(15, 23, 42, 0.75)',
+        background: pal.headerBg,
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        borderBottom: '1px solid rgba(255,255,255,.08)',
+        borderBottom: `1px solid ${pal.hairline}`,
         flexShrink: 0, gap: 12, flexWrap: 'wrap',
       }}>
         {/* Left: Module Badge & Live Stats */}
@@ -210,12 +259,12 @@ export default function LinkedListVisualizer({
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 10px', borderRadius: 8,
-            background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(139, 92, 246, 0.2))',
-            border: '1px solid rgba(96, 165, 250, 0.3)',
+            background: pal.badgeBg,
+            border: `1px solid ${pal.badgeBorder}`,
           }}>
             <span style={{ fontSize: 13 }}>{isDoubly ? '⇄' : '⛓'}</span>
             <span style={{
-              fontSize: 11, fontWeight: 700, color: '#e2e8f0',
+              fontSize: 11, fontWeight: 700, color: pal.badgeText,
               textTransform: 'uppercase', letterSpacing: '.06em',
             }}>
               {isDoubly ? 'Doubly Linked List' : 'Linked List'}
@@ -263,7 +312,7 @@ export default function LinkedListVisualizer({
           )}
 
           {/* Active Operation pill */}
-          <OperationBadge type={type} />
+          <OperationBadge type={type} theme={theme} />
         </div>
 
         {/* Right: View & Zoom Controls */}
@@ -275,9 +324,9 @@ export default function LinkedListVisualizer({
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               padding: '4px 8px', borderRadius: 6,
-              background: showAddresses ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${showAddresses ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255,255,255,0.1)'}`,
-              color: showAddresses ? '#a5b4fc' : '#94a3b8',
+              background: showAddresses ? (theme === 'light' ? 'rgba(99, 102, 241, 0.14)' : 'rgba(99, 102, 241, 0.2)') : pal.btnBg,
+              border: `1px solid ${showAddresses ? (theme === 'light' ? 'rgba(79, 70, 229, 0.4)' : 'rgba(99, 102, 241, 0.4)') : pal.btnBorder}`,
+              color: showAddresses ? (theme === 'light' ? '#4338ca' : '#a5b4fc') : pal.btnText,
               fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'all 150ms',
             }}
           >
@@ -291,9 +340,9 @@ export default function LinkedListVisualizer({
             title={layoutMode === 'wrap' ? 'Switch to Continuous Horizontal Line' : 'Switch to Snake Row Wrap'}
             style={{
               padding: '4px 8px', borderRadius: 6,
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#94a3b8', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              background: pal.btnBg,
+              border: `1px solid ${pal.btnBorder}`,
+              color: pal.btnText, fontSize: 11, fontWeight: 600, cursor: 'pointer',
             }}
           >
             {layoutMode === 'wrap' ? '⤾ Wrap' : '→ Line'}
@@ -302,8 +351,8 @@ export default function LinkedListVisualizer({
           {/* Zoom controls */}
           <div style={{
             display: 'flex', alignItems: 'center',
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: pal.btnBg,
+            border: `1px solid ${pal.btnBorder}`,
             borderRadius: 6, overflow: 'hidden',
           }}>
             <button
@@ -312,7 +361,7 @@ export default function LinkedListVisualizer({
               title="Zoom out"
               style={{
                 padding: '3px 8px', background: 'none', border: 'none',
-                color: zoom <= 0.6 ? '#475569' : '#cbd5e1', fontSize: 13, cursor: zoom <= 0.6 ? 'default' : 'pointer',
+                color: zoom <= 0.6 ? pal.btnTextDisabled : pal.zoomText, fontSize: 13, cursor: zoom <= 0.6 ? 'default' : 'pointer',
               }}
             >−</button>
             <span
@@ -320,7 +369,7 @@ export default function LinkedListVisualizer({
               title="Reset Zoom to 100%"
               style={{
                 padding: '0 5px', fontSize: 11, fontWeight: 600,
-                color: zoom === 1 ? '#64748b' : '#38bdf8', cursor: 'pointer',
+                color: zoom === 1 ? pal.textDim : '#38bdf8', cursor: 'pointer',
               }}
             >
               {Math.round(zoom * 100)}%
@@ -331,7 +380,7 @@ export default function LinkedListVisualizer({
               title="Zoom in"
               style={{
                 padding: '3px 8px', background: 'none', border: 'none',
-                color: zoom >= 1.5 ? '#475569' : '#cbd5e1', fontSize: 13, cursor: zoom >= 1.5 ? 'default' : 'pointer',
+                color: zoom >= 1.5 ? pal.btnTextDisabled : pal.zoomText, fontSize: 13, cursor: zoom >= 1.5 ? 'default' : 'pointer',
               }}
             >+</button>
           </div>
@@ -339,10 +388,10 @@ export default function LinkedListVisualizer({
           {/* Step indicator */}
           {step > 0 && (
             <div style={{
-              fontSize: 11, fontWeight: 700, color: '#94a3b8',
+              fontSize: 11, fontWeight: 700, color: pal.textMuted,
               letterSpacing: '.04em', minWidth: 65, textAlign: 'right',
             }}>
-              Step <span style={{ color: '#f1f5f9' }}>{step}</span>
+              Step <span style={{ color: pal.inactiveVal }}>{step}</span>
               {totalSteps > 0 && <span style={{ opacity: 0.6 }}>/{totalSteps}</span>}
             </div>
           )}
@@ -355,11 +404,11 @@ export default function LinkedListVisualizer({
           margin: '12px 20px 0',
           padding: '8px 16px',
           borderRadius: 10,
-          background: 'rgba(15, 23, 42, 0.7)',
+          background: pal.descBg,
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          border: `1px solid ${pal.descBorder}`,
+          boxShadow: theme === 'light' ? '0 4px 16px rgba(15,23,42,0.06)' : '0 4px 20px rgba(0,0,0,0.3)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           flexShrink: 0,
         }}>
@@ -367,7 +416,7 @@ export default function LinkedListVisualizer({
             <span style={{ fontSize: 16 }}>{getTypeIcon(type)}</span>
             <span style={{
               fontSize: 12.5, fontWeight: 600,
-              color: getTypeColor(type), letterSpacing: '.01em',
+              color: getTypeColor(type, theme), letterSpacing: '.01em',
             }}>
               {description}
             </span>
@@ -375,10 +424,10 @@ export default function LinkedListVisualizer({
 
           {activeNodeId !== -1 && activeNodeId !== null && addrMap.has(activeNodeId) && (
             <span style={{
-              fontSize: 11, fontWeight: 600, color: '#94a3b8',
+              fontSize: 11, fontWeight: 600, color: pal.textMuted,
               fontFamily: "'JetBrains Mono', monospace",
               padding: '2px 8px', borderRadius: 4,
-              background: 'rgba(255,255,255,0.06)',
+              background: pal.addrPillBg,
             }}>
               Active: {addrMap.get(activeNodeId)}
             </span>
@@ -399,7 +448,7 @@ export default function LinkedListVisualizer({
           minWidth: 'fit-content',
         }}>
           {empty ? (
-            <EmptyHint isDoubly={isDoubly} />
+            <EmptyHint isDoubly={isDoubly} theme={theme} />
           ) : (
             <NodeChain
               nodes={linkedListState}
@@ -411,6 +460,7 @@ export default function LinkedListVisualizer({
               showAddresses={showAddresses}
               addrMap={addrMap}
               zoom={zoom}
+              theme={theme}
             />
           )}
         </div>
@@ -424,20 +474,20 @@ export default function LinkedListVisualizer({
             title="Drag to resize terminal output"
             style={{
               height: 5, cursor: 'row-resize', flexShrink: 0,
-              background: resizing ? 'rgba(56, 189, 248, 0.7)' : 'rgba(255,255,255,0.08)',
+              background: resizing ? 'rgba(56, 189, 248, 0.7)' : pal.hairline,
               transition: resizing ? 'none' : 'background 150ms',
             }}
           />
           <section style={{
             height: stdoutH, flexShrink: 0,
-            background: '#040711',
-            borderTop: '1px solid rgba(255,255,255,.07)',
+            background: pal.consoleBg,
+            borderTop: `1px solid ${pal.hairline}`,
             display: 'flex', flexDirection: 'column',
           }}>
             <div style={{
               padding: '6px 16px', fontSize: 10, fontWeight: 700,
-              color: '#64748b', textTransform: 'uppercase', letterSpacing: '.08em',
-              borderBottom: '1px solid rgba(255,255,255,.04)', flexShrink: 0,
+              color: pal.textDim, textTransform: 'uppercase', letterSpacing: '.08em',
+              borderBottom: `1px solid ${pal.hairline}`, flexShrink: 0,
               display: 'flex', alignItems: 'center', gap: 6,
             }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
@@ -445,7 +495,7 @@ export default function LinkedListVisualizer({
             </div>
             <pre style={{
               flex: 1, overflow: 'auto', margin: 0,
-              padding: '10px 16px', fontSize: 12, color: '#f8fafc',
+              padding: '10px 16px', fontSize: 12, color: pal.consoleText,
               fontFamily: "'JetBrains Mono', Consolas, monospace",
               lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>{userOutput}</pre>
@@ -471,7 +521,9 @@ function NodeChain({
   showAddresses,
   addrMap,
   zoom = 1,
+  theme = 'dark',
 }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
   const containerRef = useRef(null);
   // nodeId -> DOM element (the node card div)
   const nodeElRefs = useRef(new Map());
@@ -667,14 +719,14 @@ function NodeChain({
                         >
                           <span style={{
                             padding: '2px 8px', borderRadius: 4,
-                            background: getTypeColor(type), color: '#090d16',
+                            background: getTypeColor(type, theme), color: '#090d16',
                             fontSize: 10, fontWeight: 800, letterSpacing: '.06em',
-                            boxShadow: `0 2px 10px ${getTypeColor(type)}88`,
+                            boxShadow: `0 2px 10px ${getTypeColor(type, theme)}88`,
                           }}>
                             POINTER
                           </span>
                           <span style={{
-                            fontSize: 11, color: getTypeColor(type),
+                            fontSize: 11, color: getTypeColor(type, theme),
                             lineHeight: 1, marginTop: -1,
                           }}>▼</span>
                         </div>
@@ -730,6 +782,7 @@ function NodeChain({
                           showAddresses={showAddresses}
                           addrMap={addrMap}
                           nodeById={nodeById}
+                          theme={theme}
                         />
                       </div>
 
@@ -768,18 +821,20 @@ function NodeChain({
                             isReversed={!isEven && layoutMode === 'wrap'}
                             targetAddr={showAddresses ? arrowTargetAddr : null}
                             prevAddr={showAddresses ? (addrMap.get(node.id) || null) : null}
+                            theme={theme}
                           />
                         : <SinglyHArrow
                             isActive={isActive}
                             type={type}
                             isReversed={!isEven && layoutMode === 'wrap'}
                             targetAddr={showAddresses ? arrowTargetAddr : null}
+                            theme={theme}
                           />
                     )}
 
                     {/* Corner Curve for wrapped snake row */}
                     {hasWrap && (
-                      <SnakeRowTurn fromRight={isEven} color={isActive ? getTypeColor(type) : 'rgba(255,255,255,0.2)'} />
+                      <SnakeRowTurn fromRight={isEven} color={isActive ? getTypeColor(type, theme) : pal.snakeTurnDefault} />
                     )}
                   </div>
                 );
@@ -889,7 +944,9 @@ function NodeCard({
   showAddresses,
   addrMap,
   nodeById,
+  theme = 'dark',
 }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
   const nodeAddr = addrMap.get(node.id) || '0x???';
   const nextAddr = node.nextId != null && node.nextId !== -1 ? addrMap.get(node.nextId) : null;
   const prevAddr = node.prevId != null && node.prevId !== -1 ? addrMap.get(node.prevId) : null;
@@ -903,7 +960,7 @@ function NodeCard({
   const prevNode = isDoubly && prevAddr ? nodeById?.get(node.prevId) : null;
   const prevLinkBroken = isDoubly && prevAddr && prevNode && prevNode.nextId !== node.id;
 
-  const colors = getNodeColors(isActive, type);
+  const colors = getNodeColors(isActive, type, theme);
 
   return (
     <div
@@ -911,13 +968,13 @@ function NodeCard({
       style={{
         display: 'flex', flexDirection: 'column',
         borderRadius: 12,
-        background: 'linear-gradient(160deg, #131b2e 0%, #0d121f 100%)',
+        background: pal.cardBg,
         border: `2px solid ${colors.border}`,
         boxShadow: isActive
           ? `0 0 0 4px ${colors.glow}, 0 8px 32px ${colors.shadow}`
           : isFlashing
-            ? '0 0 0 3px rgba(255,255,255,0.25), 0 4px 20px rgba(255,255,255,0.1)'
-            : '0 4px 16px rgba(0,0,0,0.4)',
+            ? (theme === 'light' ? '0 0 0 3px rgba(37,99,235,0.2), 0 4px 20px rgba(37,99,235,0.1)' : '0 0 0 3px rgba(255,255,255,0.25), 0 4px 20px rgba(255,255,255,0.1)')
+            : (theme === 'light' ? '0 2px 10px rgba(15,23,42,0.08)' : '0 4px 16px rgba(0,0,0,0.4)'),
         transform: isFlashing
           ? 'translateY(-6px) scale(1.06)'
           : isActive
@@ -932,7 +989,7 @@ function NodeCard({
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '4px 8px',
-        background: isActive ? colors.headerBg : 'rgba(255, 255, 255, 0.04)',
+        background: isActive ? colors.headerBg : pal.inactiveHeaderBg,
         borderBottom: `1px solid ${colors.border}`,
         fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em',
         fontFamily: "'JetBrains Mono', monospace",
@@ -941,13 +998,13 @@ function NodeCard({
         {showAddresses ? (
           <span style={{
             display: 'flex', alignItems: 'center', gap: 3,
-            color: isActive ? '#f8fafc' : '#94a3b8',
+            color: isActive ? pal.text : pal.textMuted,
           }}>
-            <span style={{ color: isActive ? colors.label : '#475569', fontSize: 8.5 }}>Addr</span>
+            <span style={{ color: isActive ? colors.label : pal.textFaint, fontSize: 8.5 }}>Addr</span>
             <span style={{
-              background: isActive ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.3)',
+              background: isActive ? pal.addrChipActiveBg : pal.addrChipBg,
               padding: '1px 5px', borderRadius: 3,
-              color: isActive ? '#f8fafc' : '#64748b',
+              color: isActive ? pal.text : pal.addrChipText,
             }}>
               {nodeAddr}
             </span>
@@ -957,9 +1014,9 @@ function NodeCard({
         )}
         {/* Index badge */}
         <span style={{
-          background: isActive ? `${colors.label}22` : 'rgba(255,255,255,0.06)',
-          border: `1px solid ${isActive ? colors.label + '44' : 'rgba(255,255,255,0.1)'}`,
-          color: isActive ? colors.label : '#475569',
+          background: isActive ? `${colors.label}22` : pal.idxBadgeBg,
+          border: `1px solid ${isActive ? colors.label + '44' : pal.idxBadgeBorder}`,
+          color: isActive ? colors.label : pal.idxBadgeText,
           padding: '0px 5px', borderRadius: 3, fontSize: 9,
         }}>
           [{index}]
@@ -973,11 +1030,13 @@ function NodeCard({
           <>
             <div style={{
               padding: '10px 8px', minWidth: 46,
-              background: isActive ? 'rgba(139, 92, 246, 0.15)' : 'rgba(139, 92, 246, 0.04)',
+              background: isActive
+                ? (theme === 'light' ? 'rgba(124, 58, 237, 0.1)' : 'rgba(139, 92, 246, 0.15)')
+                : (theme === 'light' ? 'rgba(124, 58, 237, 0.04)' : 'rgba(139, 92, 246, 0.04)'),
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
             }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                <span style={{ fontSize: 8.5, fontWeight: 700, color: '#c4b5fd', letterSpacing: '.06em' }}>
+                <span style={{ fontSize: 8.5, fontWeight: 700, color: theme === 'light' ? '#6d28d9' : '#c4b5fd', letterSpacing: '.06em' }}>
                   PREV
                 </span>
                 {prevLinkBroken && (
@@ -987,14 +1046,14 @@ function NodeCard({
               {/* FIX-2: ← prefix to indicate direction */}
               <span style={{
                 fontSize: 9.5, fontWeight: 700,
-                color: prevLinkBroken ? '#f87171' : prevAddr ? '#a78bfa' : '#475569',
+                color: prevLinkBroken ? (theme === 'light' ? '#dc2626' : '#f87171') : prevAddr ? (theme === 'light' ? '#7c3aed' : '#a78bfa') : pal.textFaint,
                 fontFamily: "'JetBrains Mono', monospace",
                 textAlign: 'center',
               }}>
                 {prevAddr ? (
                   <><span style={{ opacity: 0.6 }}>←</span>{prevAddr}</>
                 ) : (
-                  <span style={{ color: '#475569' }}>null</span>
+                  <span style={{ color: pal.textFaint }}>null</span>
                 )}
               </span>
             </div>
@@ -1038,14 +1097,14 @@ function NodeCard({
           {/* FIX-2: → prefix to indicate direction */}
           <span style={{
             fontSize: 9.5, fontWeight: 700,
-            color: nextLinkBroken ? '#f87171' : nextAddr ? colors.ptr : '#ef4444',
+            color: nextLinkBroken ? (theme === 'light' ? '#dc2626' : '#f87171') : nextAddr ? colors.ptr : (theme === 'light' ? '#dc2626' : '#ef4444'),
             fontFamily: "'JetBrains Mono', monospace",
             textAlign: 'center',
           }}>
             {nextAddr ? (
               <><span style={{ opacity: 0.6 }}>→</span>{nextAddr}</>
             ) : (
-              <span style={{ color: '#ef4444' }}>null</span>
+              <span style={{ color: theme === 'light' ? '#dc2626' : '#ef4444' }}>null</span>
             )}
           </span>
         </div>
@@ -1059,9 +1118,10 @@ function NodeCard({
    ══════════════════════════════════════════════════════ */
 
 // Singly forward/reverse arrow with optional address annotation
-function SinglyHArrow({ isActive, type, isReversed = false, targetAddr = null }) {
+function SinglyHArrow({ isActive, type, isReversed = false, targetAddr = null, theme = 'dark' }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
   const markerId    = getFwdMarkerId(isActive, type);
-  const strokeColor = isActive ? getTypeColor(type) : 'rgba(148, 163, 184, 0.4)';
+  const strokeColor = isActive ? getTypeColor(type, theme) : pal.inactiveArrow;
   const svgH = targetAddr ? 36 : 24;
 
   return (
@@ -1074,7 +1134,7 @@ function SinglyHArrow({ isActive, type, isReversed = false, targetAddr = null })
             textAnchor="middle"
             fontSize="7.5"
             fontWeight="600"
-            fill={isActive ? strokeColor : '#475569'}
+            fill={isActive ? strokeColor : pal.arrowLabelInactive}
             fontFamily="'JetBrains Mono', monospace"
           >
             {targetAddr}
@@ -1106,10 +1166,11 @@ function SinglyHArrow({ isActive, type, isReversed = false, targetAddr = null })
 }
 
 // Doubly bidirectional arrows with stable IDs + optional address label
-function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, prevAddr = null }) {
+function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, prevAddr = null, theme = 'dark' }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
   const nextMarkerId = isActive ? 'url(#ll-next-h-active)' : 'url(#ll-next-h)';
   const prevMarkerId = isActive ? 'url(#ll-prev-h-active)' : 'url(#ll-prev-h)';
-  const nextColor    = isActive ? getTypeColor(type) : '#38bdf8';
+  const nextColor    = isActive ? getTypeColor(type, theme) : '#38bdf8';
   const prevColor    = isActive ? '#c4b5fd' : '#818cf8';
   const hasLabel     = targetAddr || prevAddr;
   const svgW         = 46;
@@ -1124,7 +1185,7 @@ function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, 
       {hasLabel && (
         <span style={{
           fontSize: 7, fontWeight: 600,
-          color: '#475569',
+          color: pal.textFaint,
           fontFamily: "'JetBrains Mono', monospace",
           textAlign: 'center',
         }}>
@@ -1156,7 +1217,7 @@ function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, 
       {hasLabel && (
         <span style={{
           fontSize: 7, fontWeight: 600,
-          color: isActive ? nextColor : '#475569',
+          color: isActive ? nextColor : pal.textFaint,
           fontFamily: "'JetBrains Mono', monospace",
           textAlign: 'center',
         }}>
@@ -1190,14 +1251,25 @@ function SnakeRowTurn({ fromRight, color }) {
 /* ══════════════════════════════════════════════════════
    Status Badges & Operation Helpers
    ══════════════════════════════════════════════════════ */
-function OperationBadge({ type }) {
-  const conf = {
+function OperationBadge({ type, theme = 'dark' }) {
+  const confDark = {
     ll_insert:   { label: 'INSERT',    color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: 'rgba(52, 211, 153, 0.3)' },
     ll_traverse: { label: 'TRAVERSE',  color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)', border: 'rgba(56, 189, 248, 0.3)' },
     ll_delete:   { label: 'DELETE',    color: '#f87171', bg: 'rgba(248, 113, 113, 0.15)', border: 'rgba(248, 113, 113, 0.3)' },
     ll_update:   { label: 'LINK / SET',color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.3)' },
     ll_init:     { label: 'INIT',      color: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)', border: 'rgba(192, 132, 252, 0.3)' },
-  }[type] || { label: 'SNAPSHOT', color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.15)', border: 'rgba(148, 163, 184, 0.3)' };
+  };
+  const confLight = {
+    ll_insert:   { label: 'INSERT',    color: '#047857', bg: 'rgba(52, 211, 153, 0.14)', border: 'rgba(4, 120, 87, 0.3)' },
+    ll_traverse: { label: 'TRAVERSE',  color: '#0e7490', bg: 'rgba(56, 189, 248, 0.14)', border: 'rgba(14, 116, 144, 0.3)' },
+    ll_delete:   { label: 'DELETE',    color: '#b91c1c', bg: 'rgba(248, 113, 113, 0.14)', border: 'rgba(185, 28, 28, 0.3)' },
+    ll_update:   { label: 'LINK / SET',color: '#a16207', bg: 'rgba(251, 191, 36, 0.16)', border: 'rgba(161, 98, 7, 0.3)' },
+    ll_init:     { label: 'INIT',      color: '#7e22ce', bg: 'rgba(192, 132, 252, 0.14)', border: 'rgba(126, 34, 206, 0.3)' },
+  };
+  const conf = (theme === 'light' ? confLight : confDark)[type]
+    || (theme === 'light'
+      ? { label: 'SNAPSHOT', color: '#475569', bg: 'rgba(148, 163, 184, 0.16)', border: 'rgba(71, 85, 105, 0.3)' }
+      : { label: 'SNAPSHOT', color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.15)', border: 'rgba(148, 163, 184, 0.3)' });
 
   return (
     <div style={{
@@ -1216,7 +1288,16 @@ function OperationBadge({ type }) {
   );
 }
 
-function getTypeColor(type) {
+function getTypeColor(type, theme = 'dark') {
+  if (theme === 'light') {
+    switch (type) {
+      case 'll_insert':   return '#047857';
+      case 'll_delete':   return '#b91c1c';
+      case 'll_traverse': return '#0e7490';
+      case 'll_init':     return '#7e22ce';
+      default:            return '#a16207';
+    }
+  }
   switch (type) {
     case 'll_insert':   return '#34d399';
     case 'll_delete':   return '#f87171';
@@ -1236,29 +1317,30 @@ function getTypeIcon(type) {
   }
 }
 
-function getNodeColors(isActive, type) {
+function getNodeColors(isActive, type, theme = 'dark') {
   if (isActive) {
-    const c = getTypeColor(type);
+    const c = getTypeColor(type, theme);
     return {
       border:   c,
       headerBg: `${c}26`,
       dataBg:   `${c}18`,
       nextBg:   `${c}12`,
-      val:      '#ffffff',
+      val:      theme === 'light' ? '#0f172a' : '#ffffff',
       label:    c,
       ptr:      c,
       glow:     `${c}66`,
       shadow:   `${c}33`,
     };
   }
+  const pal = PALETTE[theme] || PALETTE.dark;
   return {
-    border:   'rgba(255,255,255,0.12)',
-    headerBg: 'rgba(255,255,255,0.03)',
-    dataBg:   'rgba(255,255,255,0.02)',
-    nextBg:   'rgba(255,255,255,0.01)',
-    val:      '#f1f5f9',
-    label:    '#64748b',
-    ptr:      '#94a3b8',
+    border:   pal.inactiveBorder,
+    headerBg: pal.inactiveHeaderBg,
+    dataBg:   theme === 'light' ? '#fbfcfd' : 'rgba(255,255,255,0.02)',
+    nextBg:   theme === 'light' ? '#f6f8fa' : 'rgba(255,255,255,0.01)',
+    val:      pal.inactiveVal,
+    label:    pal.inactiveLabel,
+    ptr:      pal.inactivePtr,
     glow:     'transparent',
     shadow:   'transparent',
   };
@@ -1267,32 +1349,35 @@ function getNodeColors(isActive, type) {
 /* ══════════════════════════════════════════════════════
    Empty State Visual
    ══════════════════════════════════════════════════════ */
-function EmptyHint({ isDoubly }) {
+function EmptyHint({ isDoubly, theme = 'dark' }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'center', padding: '60px 32px', gap: 18,
-      color: '#94a3b8', textAlign: 'center', maxWidth: 460, margin: '40px auto 0',
-      background: 'rgba(15, 23, 42, 0.4)',
+      color: pal.textMuted, textAlign: 'center', maxWidth: 460, margin: '40px auto 0',
+      background: pal.emptyBg,
       backdropFilter: 'blur(12px)',
       borderRadius: 16,
-      border: '1px solid rgba(255, 255, 255, 0.07)',
+      border: `1px solid ${pal.emptyBorder}`,
     }}>
       <div style={{
         fontSize: 36, width: 76, height: 76, borderRadius: 20,
-        background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(139, 92, 246, 0.15))',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
+        background: theme === 'light'
+          ? 'linear-gradient(135deg, rgba(14, 116, 144, 0.12), rgba(126, 34, 206, 0.12))'
+          : 'linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(139, 92, 246, 0.15))',
+        border: `1px solid ${pal.inactiveBorder}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+        boxShadow: theme === 'light' ? '0 8px 24px rgba(15,23,42,0.08)' : '0 8px 30px rgba(0,0,0,0.4)',
       }}>
         {isDoubly ? '⇄' : '⛓'}
       </div>
       <div>
-        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', margin: '0 0 6px' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: pal.text, margin: '0 0 6px' }}>
           {isDoubly ? 'Doubly Linked List Visualizer' : 'Linked List Visualizer'}
         </h3>
-        <p style={{ fontSize: 13, color: '#94a3b8', margin: 0, lineHeight: 1.6 }}>
-          Run your code with a <code style={{ color: '#38bdf8', background: 'rgba(56, 189, 248, 0.1)', padding: '2px 6px', borderRadius: 4 }}>Node</code> class to see the live pointer chain animate step-by-step.
+        <p style={{ fontSize: 13, color: pal.textMuted, margin: 0, lineHeight: 1.6 }}>
+          Run your code with a <code style={{ color: theme === 'light' ? '#0e7490' : '#38bdf8', background: theme === 'light' ? 'rgba(14,116,144,0.1)' : 'rgba(56, 189, 248, 0.1)', padding: '2px 6px', borderRadius: 4 }}>Node</code> class to see the live pointer chain animate step-by-step.
         </p>
       </div>
 
@@ -1300,9 +1385,9 @@ function EmptyHint({ isDoubly }) {
         {['head = Node(10)', 'head.next = Node(20)', 'cur = head.next'].map(snippet => (
           <span key={snippet} style={{
             padding: '4px 10px', borderRadius: 6,
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            fontSize: 11, color: '#cbd5e1',
+            background: pal.codeChipBg,
+            border: `1px solid ${pal.codeChipBorder}`,
+            fontSize: 11, color: pal.codeChipText,
             fontFamily: "'JetBrains Mono', monospace",
           }}>
             {snippet}

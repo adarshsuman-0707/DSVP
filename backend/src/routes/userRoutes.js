@@ -5,6 +5,8 @@ const { verifyToken } = require('../middleware/authMiddleware');
 const UserModel = require('../models/userModel');
 const { sql, getPool } = require('../config/db');
 const FeedbackModel = require('../models/feedbackModel');
+const CoinModel = require('../models/coinModel');
+const { buildEnvelope, parsePaging } = require('../utils/paginate');
 
 router.get('/me', verifyToken, async (req, res, next) => {
   try {
@@ -43,6 +45,7 @@ router.patch('/profile', verifyToken, async (req, res, next) => {
       `);
 
     const updated = await UserModel.findById(req.user.userId);
+    await UserModel.logEvent(req.user.userId, 'profile_updated');
     res.json({ message: 'Profile updated successfully', user: updated });
   } catch (err) {
     next(err);
@@ -96,6 +99,7 @@ router.patch('/password', verifyToken, async (req, res, next) => {
         WHERE UserId = @UserId
       `);
 
+    await UserModel.logEvent(req.user.userId, 'password_changed');
     res.json({ message: 'Password changed successfully' });
   } catch (err) {
     next(err);
@@ -130,6 +134,12 @@ router.post('/feedback', verifyToken, async (req, res, next) => {
         VALUES (@UserId, @Subject, @Message, 'open')
       `);
 
+    await UserModel.logEvent(req.user.userId, 'feedback_submitted', { feedbackId: result.recordset[0].FeedbackId });
+
+    // Capped at once per week so it can't be farmed by spamming feedback.
+    if (!(await CoinModel.hasEarnedSince(req.user.userId, 'feedback', 7))) {
+      await CoinModel.earn(req.user.userId, 15, 'feedback', 'Feedback submitted');
+    }
     res.status(201).json({
       message: 'Feedback submitted successfully',
       feedbackId: result.recordset[0].FeedbackId,
@@ -214,6 +224,7 @@ router.post('/code-history/save', verifyToken, async (req, res, next) => {
         VALUES (@UserId, @ModuleId, @ModuleSlug, @Title, @Language, @Code, SYSUTCDATETIME(), SYSUTCDATETIME())
       `);
 
+    await UserModel.logEvent(req.user.userId, 'snippet_created', { snippetId: result.recordset[0].SnippetId });
     res.status(201).json({
       message: 'Code saved successfully',
       snippetId: result.recordset[0].SnippetId,
@@ -224,44 +235,53 @@ router.post('/code-history/save', verifyToken, async (req, res, next) => {
   }
 });
 
-// GET /api/users/code-history - List user's saved code
+// GET /api/users/code-history - List user's saved code (paginated)
 router.get('/code-history', verifyToken, async (req, res, next) => {
   try {
-    const { moduleSlug, language, limit = 50 } = req.query;
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 50));
+    const { page, pageSize } = parsePaging(req.query);
+    const { moduleSlug, language } = req.query;
+    const startRow = ((page - 1) * pageSize) + 1;
+    const endRow   = page * pageSize;
 
     const pool = await getPool();
-    let query = `
-      SELECT TOP (@Limit)
-        SnippetId, Title, Language, ModuleSlug, 
-        CreatedAt, UpdatedAt,
-        LEN(Code) AS CodeLength
-      FROM dbo.SavedSnippets
-      WHERE UserId = @UserId
-    `;
-
+    const conditions = ['UserId = @UserId'];
     const request = pool.request()
       .input('UserId', sql.Int, req.user.userId)
-      .input('Limit', sql.Int, limitNum);
+      .input('StartRow', sql.Int, startRow)
+      .input('EndRow', sql.Int, endRow);
 
     if (moduleSlug) {
-      query += ' AND ModuleSlug = @ModuleSlug';
+      conditions.push('ModuleSlug = @ModuleSlug');
       request.input('ModuleSlug', sql.NVarChar(100), moduleSlug);
     }
-
     if (language) {
-      query += ' AND Language = @Language';
+      conditions.push('Language = @Language');
       request.input('Language', sql.VarChar(20), language);
     }
+    const where = conditions.join(' AND ');
 
-    query += ' ORDER BY CreatedAt DESC';
+    const countRequest = pool.request().input('UserId', sql.Int, req.user.userId);
+    if (moduleSlug) countRequest.input('ModuleSlug', sql.NVarChar(100), moduleSlug);
+    if (language) countRequest.input('Language', sql.VarChar(20), language);
 
-    const result = await request.query(query);
+    const [rows, totalResult] = await Promise.all([
+      request.query(`
+        WITH SnippetData AS (
+          SELECT SnippetId, Title, Language, ModuleSlug, CreatedAt, UpdatedAt,
+                 LEN(Code) AS CodeLength,
+                 ROW_NUMBER() OVER (ORDER BY CreatedAt DESC) AS RowNum
+          FROM dbo.SavedSnippets
+          WHERE ${where}
+        )
+        SELECT SnippetId, Title, Language, ModuleSlug, CreatedAt, UpdatedAt, CodeLength
+        FROM SnippetData
+        WHERE RowNum BETWEEN @StartRow AND @EndRow
+        ORDER BY RowNum
+      `),
+      countRequest.query(`SELECT COUNT(*) AS total FROM dbo.SavedSnippets WHERE ${where}`),
+    ]);
 
-    res.json({
-      history: result.recordset,
-      count: result.recordset.length
-    });
+    res.json(buildEnvelope(rows.recordset, page, pageSize, totalResult.recordset[0].total));
   } catch (err) {
     next(err);
   }
@@ -310,6 +330,7 @@ router.delete('/code-history/:id', verifyToken, async (req, res, next) => {
       return res.status(404).json({ message: 'Code not found or access denied' });
     }
 
+    await UserModel.logEvent(req.user.userId, 'snippet_deleted', { snippetId: id });
     res.json({ message: 'Code deleted successfully' });
   } catch (err) {
     next(err);

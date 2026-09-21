@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -X POST http://localhost:5051/api/execution/run -H 'Authorization: Bearer __TRACKED_VAR__' -H 'Content-Type: application/json' -d @grid_rec_test.json -o grid_rec_result.json)",
+      "Bash(node -e ' *)",
+      "Bash(mvn -q clean package)",
+      "Bash(taskkill //PID 18280 //F)",
+      "Bash(node run_migration.js \"F:/dotnet/DSVP/database/10_coins.sql\")",
+      "Bash(node run_migration.js \"F:/dotnet/DSVP/database/11_coins_payment_fields.sql\")"
+    ]
+  }
+}

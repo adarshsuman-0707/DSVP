@@ -1,5 +1,7 @@
 package dsvp;
 
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
@@ -62,6 +64,27 @@ public class QueueInstrumentVisitor extends VoidVisitorAdapter<Void> {
                 }
             }
         });
+    }
+
+    // Same reasoning as StackInstrumentVisitor: without this, passing a
+    // Queue into a helper method (recursive BFS, a queue-based recursive
+    // helper, etc.) leaves the parameter typed as plain java.util.Queue
+    // while the caller's local was rewritten to DSVPQueue — a compile
+    // error before the program ever runs.
+    @Override
+    public void visit(Parameter p, Void arg) {
+        super.visit(p, arg);
+        if (isQueueType(p.getType())) {
+            renameToDSVPQueue((ClassOrInterfaceType) p.getType());
+        }
+    }
+
+    @Override
+    public void visit(MethodDeclaration m, Void arg) {
+        super.visit(m, arg);
+        if (isQueueType(m.getType())) {
+            renameToDSVPQueue((ClassOrInterfaceType) m.getType());
+        }
     }
 
     private boolean isQueueType(Type t) {

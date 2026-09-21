@@ -1,15 +1,17 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const UserModel = require('../models/userModel');
+const CoinModel = require('../models/coinModel');
 const { sql, getPool } = require('../config/db');
 const { sendOtpEmail, sendSignupOtpEmail } = require('../services/emailService');
 
 /* ── helpers ── */
 function generateToken(user) {
   return jwt.sign(
-    { 
-      userId: user.UserId, 
+    {
+      userId: user.UserId,
       role: user.Role,
+      tokenVersion: user.TokenVersion ?? 1,
       subscriptionPlan: user.SubscriptionPlan || 'free',
       premiumModulesAccess: user.PremiumModulesAccess ? JSON.parse(user.PremiumModulesAccess) : []
     },
@@ -58,8 +60,27 @@ async function login(req, res, next) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    if (user.Status === 'blocked') {
+      return res.status(403).json({ message: 'This account has been blocked. Contact support.' });
+    }
+    if (user.Status === 'inactive') {
+      return res.status(403).json({ message: 'This account is inactive. Contact support to reactivate.' });
+    }
+
     await UserModel.updateLastLogin(user.UserId);
     await UserModel.logEvent(user.UserId, 'login');
+
+    // Daily login bonus — earn() itself no-ops for users who haven't
+    // unlocked coins yet (never purchased a plan), so this is safe to fire
+    // unconditionally; the once-per-day guard just avoids repeat awards
+    // for multiple logins on the same day. Track the result so the
+    // response reflects the fresh balance instead of the pre-earn snapshot.
+    let coinBalance = user.CoinBalance || 0;
+    if (!(await CoinModel.hasEarnedToday(user.UserId, 'login'))) {
+      const { applied, balance } = await CoinModel.earn(user.UserId, 5, 'login', 'Daily login bonus');
+      if (applied) coinBalance = balance;
+    }
+
     const token = generateToken(user);
 
     res.json({
@@ -71,7 +92,9 @@ async function login(req, res, next) {
         IsPremium: user.IsPremium,
         SubscriptionPlan: user.SubscriptionPlan || 'free',
         SubscriptionExpiry: user.SubscriptionExpiry,
-        PremiumModulesAccess: user.PremiumModulesAccess ? JSON.parse(user.PremiumModulesAccess) : []
+        PremiumModulesAccess: user.PremiumModulesAccess ? JSON.parse(user.PremiumModulesAccess) : [],
+        CoinsUnlocked: !!user.CoinsUnlocked,
+        CoinBalance: coinBalance,
       },
       token,
     });
@@ -374,4 +397,4 @@ async function verifySignupOtp(req, res, next) {
   }
 }
 
-module.exports = { register, login, me, sendOtp, verifyOtp, resetPassword, sendSignupOtp, verifySignupOtp };
+module.exports = { register, login, me, sendOtp, verifyOtp, resetPassword, sendSignupOtp, verifySignupOtp, generateToken };

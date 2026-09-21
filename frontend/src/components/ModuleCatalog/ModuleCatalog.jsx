@@ -2,8 +2,15 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppShell from '../common/AppShell';
 import { getModules } from '../../services/api';
+import { useTheme } from '../../context/ThemeContext';
 
-const FILTERS = ['all', 'free', 'premium'];
+const FILTERS = ['all', 'free', 'basic', 'premium'];
+
+const ACCESS_META = {
+  free:    { icon: '🟢', label: 'Free',    color: '#4CAF50', bg: '#F0FDF4', border: '#bbf7d0' },
+  basic:   { icon: '🔵', label: 'Basic',   color: '#2E74B5', bg: '#EFF6FF', border: '#bfdbfe' },
+  premium: { icon: '🟣', label: 'Premium', color: '#7c3aed', bg: '#F5F3FF', border: '#ddd6fe' },
+};
 
 const STRUCT_ICONS = {
   'linked-list':         '⛓',
@@ -33,7 +40,7 @@ export default function ModuleCatalog() {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
   const navigate = useNavigate();
-
+ const { T } = useTheme();
   useEffect(() => {
     setLoading(true);
     setError('');
@@ -44,12 +51,13 @@ export default function ModuleCatalog() {
   }, [filter]);
 
   function handleCardClick(m) {
-    // If premium and user doesn't have access, redirect to pricing
-    if (m.IsPremium && !m.HasAccess) {
+    // Locking is driven purely by the server's HasAccess flag (computed
+    // from the module's RequiredPlan vs. the user's actual plan) — not a
+    // separate IsPremium toggle, which can drift out of sync with it.
+    if (!m.HasAccess) {
       navigate('/pricing');
       return;
     }
-    // Otherwise navigate to workspace
     navigate(`/workspace?module=${m.Slug}`);
   }
 
@@ -58,8 +66,8 @@ export default function ModuleCatalog() {
       <div style={{ padding: '32px 32px', minHeight: '100%' }}>
 
         {/* page header */}
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: '#1e293b', marginBottom: 6 }}>
+        <div style={{ marginBottom: 20 }}>
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: T.text, marginBottom: 6 }}>
             Module Catalog
           </h1>
           <p style={{ fontSize: 14, color: '#64748b' }}>
@@ -67,8 +75,20 @@ export default function ModuleCatalog() {
           </p>
         </div>
 
+        {/* legend */}
+        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+          {['free', 'basic', 'premium'].map(level => {
+            const meta = ACCESS_META[level];
+            return (
+              <span key={level} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
+                <span>{meta.icon}</span> {meta.label}
+              </span>
+            );
+          })}
+        </div>
+
         {/* filter chips */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 28, flexWrap: 'wrap' }}>
           {FILTERS.map(f => (
             <button
               key={f}
@@ -83,9 +103,7 @@ export default function ModuleCatalog() {
                 transition: 'all 150ms',
               }}
             >
-              {f === 'all'     ? '⊞ All'      :
-               f === 'free'    ? '✓ Free'     :
-                                 '⭐ Premium'}
+              {f === 'all' ? '⊞ All' : `${ACCESS_META[f].icon} ${ACCESS_META[f].label}`}
             </button>
           ))}
         </div>
@@ -124,7 +142,15 @@ export default function ModuleCatalog() {
 function ModuleCard({ module: m, onClick }) {
   const [hovered, setHovered] = useState(false);
   const icon = STRUCT_ICONS[m.Slug] || '◈';
-  const locked = m.IsPremium && !m.HasAccess;
+  const locked = !m.HasAccess;
+  const level = m.RequiredPlan || 'free';
+  const meta = ACCESS_META[level];
+
+  const ctaText = locked
+    ? `🔒 ${meta.label} Plan Required`
+    : level === 'free'
+      ? 'Start Learning →'
+      : `Available with ${meta.label} ✓`;
 
   return (
     <div
@@ -136,7 +162,7 @@ function ModuleCard({ module: m, onClick }) {
         border: `1.5px solid ${hovered ? '#2E74B5' : '#e2e8f0'}`,
         borderRadius: 16,
         padding: '24px 22px',
-        cursor: 'pointer', // Always clickable now
+        cursor: 'pointer',
         opacity: locked ? 0.85 : 1,
         transition: 'all 200ms',
         transform: hovered ? 'translateY(-3px)' : 'none',
@@ -146,7 +172,6 @@ function ModuleCard({ module: m, onClick }) {
         position: 'relative', overflow: 'hidden',
       }}
     >
-      {/* premium overlay tint */}
       {locked && (
         <div style={{
           position: 'absolute', inset: 0,
@@ -158,27 +183,26 @@ function ModuleCard({ module: m, onClick }) {
       {/* icon */}
       <div style={{
         width: 48, height: 48, borderRadius: 12,
-        background: locked ? '#f1f5f9' : '#EFF6FF',
+        background: locked ? '#f1f5f9' : meta.bg,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 24, marginBottom: 16,
-        border: `1px solid ${locked ? '#e2e8f0' : '#bfdbfe'}`,
+        border: `1px solid ${locked ? '#e2e8f0' : meta.border}`,
       }}>
         {locked ? '🔒' : icon}
       </div>
 
-      {/* name + badge */}
+      {/* name + access badge */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, color: locked ? '#94a3b8' : '#1e293b', lineHeight: 1.3 }}>
           {m.Name}
         </h3>
-        {locked && (
-          <span style={{
-            flexShrink: 0, padding: '2px 8px', borderRadius: 999,
-            background: '#FFF7ED', color: '#F2A93B',
-            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-            letterSpacing: '.06em', border: '1px solid #fed7aa',
-          }}>Premium</span>
-        )}
+        <span style={{
+          flexShrink: 0, padding: '2px 8px', borderRadius: 999,
+          background: meta.bg, color: meta.color,
+          fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+          letterSpacing: '.06em', border: `1px solid ${meta.border}`,
+          whiteSpace: 'nowrap',
+        }}>{meta.icon} {meta.label}</span>
       </div>
 
       <p style={{
@@ -191,10 +215,10 @@ function ModuleCard({ module: m, onClick }) {
       {/* footer */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{
-          fontSize: 11, fontWeight: 600, color: locked ? '#F2A93B' : '#2E74B5',
+          fontSize: 11, fontWeight: 600, color: locked ? '#F2A93B' : meta.color,
           textTransform: 'uppercase', letterSpacing: '.05em',
         }}>
-          {locked ? '🔓 Upgrade to unlock →' : 'Open module →'}
+          {ctaText}
         </span>
         {!locked && m.Progress > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

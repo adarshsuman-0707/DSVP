@@ -1,5 +1,7 @@
 package dsvp;
 
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
@@ -65,6 +67,32 @@ public class StackInstrumentVisitor extends VoidVisitorAdapter<Void> {
                 }
             }
         });
+    }
+
+    // Parameters: without this, passing a Stack into ANY helper method —
+    // the whole point of writing a recursive stack algorithm — leaves the
+    // parameter typed as plain java.util.Stack while the caller's local
+    // variable was rewritten to DSVPStack, a straight type mismatch that
+    // fails to compile before the program ever runs. DSVPStack has the
+    // exact same API surface as Stack, so every occurrence of the type
+    // name gets rewritten uniformly — no raw/wrapped split needed like
+    // arrays have, since there's only ever the one representation here.
+    @Override
+    public void visit(Parameter p, Void arg) {
+        super.visit(p, arg);
+        if (isStackType(p.getType())) {
+            renameToDSVPStack((ClassOrInterfaceType) p.getType());
+        }
+    }
+
+    // Return types: a helper that BUILDS and returns a Stack (e.g. a
+    // recursive "reverse and return" style) needs the same rewrite.
+    @Override
+    public void visit(MethodDeclaration m, Void arg) {
+        super.visit(m, arg);
+        if (isStackType(m.getType())) {
+            renameToDSVPStack((ClassOrInterfaceType) m.getType());
+        }
     }
 
     private boolean isStackType(Type t) {

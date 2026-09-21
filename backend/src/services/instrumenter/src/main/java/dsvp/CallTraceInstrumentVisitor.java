@@ -151,9 +151,32 @@ public class CallTraceInstrumentVisitor extends VoidVisitorAdapter<Void> {
             wrapAndRecurse(ifs.getThenStmt(), methodName, outerLocals, ifs::setThenStmt);
             ifs.getElseStmt().ifPresent(e -> wrapAndRecurse(e, methodName, outerLocals, ifs::setElseStmt));
         } else if (stmt instanceof ForStmt) {
-            wrapAndRecurse(((ForStmt) stmt).getBody(), methodName, outerLocals, ((ForStmt) stmt)::setBody);
+            // for(int i=0, j=arr.length-1; ...) — i/j live only in the loop's
+            // own init clause, which is not a body statement, so
+            // recordDeclarations() never sees it. Without this, the most
+            // common pointer pattern in the whole app (classic i/j index
+            // loops) was invisible to the tracer while a body-declared var
+            // like `temp` worked fine — extract them into the body's scope
+            // the same way a regular declaration would be.
+            ForStmt fs = (ForStmt) stmt;
+            LinkedHashMap<String, String> forScope = new LinkedHashMap<>(outerLocals);
+            for (Expression initExpr : fs.getInitialization()) {
+                extractVarsFromExpr(initExpr, forScope);
+            }
+            wrapAndRecurse(fs.getBody(), methodName, forScope, fs::setBody);
         } else if (stmt instanceof ForEachStmt) {
-            wrapAndRecurse(((ForEachStmt) stmt).getBody(), methodName, outerLocals, ((ForEachStmt) stmt)::setBody);
+            // for(int v : arr) — the loop variable has no initializer in the
+            // AST (it's bound by iteration), so extractVarsFromExpr's
+            // isPresent() check would skip it; add it directly instead.
+            ForEachStmt fes = (ForEachStmt) stmt;
+            LinkedHashMap<String, String> forScope = new LinkedHashMap<>(outerLocals);
+            VariableDeclarationExpr fev = fes.getVariable();
+            for (VariableDeclarator vd : fev.getVariables()) {
+                if (isTraceableType(vd.getType())) {
+                    forScope.put(vd.getNameAsString(), simpleTypeName(vd.getType()));
+                }
+            }
+            wrapAndRecurse(fes.getBody(), methodName, forScope, fes::setBody);
         } else if (stmt instanceof WhileStmt) {
             wrapAndRecurse(((WhileStmt) stmt).getBody(), methodName, outerLocals, ((WhileStmt) stmt)::setBody);
         } else if (stmt instanceof DoStmt) {

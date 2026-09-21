@@ -129,4 +129,103 @@ async function sendSignupOtpEmail(toEmail, otp, expiresMin = 10) {
   });
 }
 
-module.exports = { sendOtpEmail, sendSignupOtpEmail };
+function baseWrapper(bodyHtml) {
+  return `
+    <div style="font-family:'Inter',Arial,sans-serif;max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(135deg,#1F4E79,#2E74B5);padding:28px 32px;">
+        <span style="font-size:20px;font-weight:700;color:#fff;">DSVP</span>
+      </div>
+      <div style="padding:32px;">${bodyHtml}</div>
+      <div style="background:#f8fafc;padding:16px 32px;border-top:1px solid #e2e8f0;">
+        <p style="font-size:12px;color:#94a3b8;margin:0;text-align:center;">
+          © ${new Date().getFullYear()} DSVP Platform · This is an automated message
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Admin-initiated password reset — sends a secure single-use LINK, never a
+ * plaintext password. The link's token is the same short-lived JWT the
+ * self-service "forgot password" flow already issues and verifies.
+ */
+async function sendAdminPasswordResetEmail(toEmail, fullName, resetLink) {
+  const transporter = getTransporter();
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+
+  const html = baseWrapper(`
+    <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Password Reset Request</h2>
+    <p style="font-size:14px;color:#64748b;margin:0 0 24px;line-height:1.6;">
+      Hello ${fullName || ''},<br/><br/>
+      Your password reset was requested by an administrator. All your current
+      sessions have been ended for security. Use the secure link below to set
+      a new password.
+    </p>
+    <div style="text-align:center;margin-bottom:24px;">
+      <a href="${resetLink}" style="display:inline-block;padding:12px 28px;border-radius:10px;
+        background:linear-gradient(135deg,#2E74B5,#1F4E79);color:#fff;font-weight:700;
+        font-size:14px;text-decoration:none;">Reset Password</a>
+    </div>
+    <p style="font-size:13px;color:#94a3b8;margin:0;">
+      This link expires soon and can only be used once. If you didn't expect this, contact support.
+    </p>
+  `);
+
+  await transporter.sendMail({
+    from,
+    to: toEmail,
+    subject: 'Password Reset Request',
+    text: `Hello ${fullName || ''},\n\nYour password reset was requested by an administrator. Use this link to set a new password (expires soon, single use):\n\n${resetLink}\n\nIf you didn't expect this, contact support.`,
+    html,
+  });
+}
+
+const STATUS_COPY = {
+  blocked: {
+    subject: 'Your account has been blocked',
+    heading: 'Account Blocked',
+    body: 'Your DSVP account has been blocked by an administrator. You no longer have access to the platform. If you believe this is a mistake, please contact support.',
+  },
+  inactive: {
+    subject: 'Your account has been deactivated',
+    heading: 'Account Deactivated',
+    body: 'Your DSVP account has been deactivated by an administrator. Your access has been suspended. Contact support if you have questions or wish to reactivate.',
+  },
+  active: {
+    subject: 'Your account has been activated',
+    heading: 'Account Activated',
+    body: 'Your DSVP account is active again. You can now log in and use the platform as usual.',
+  },
+};
+
+/**
+ * Notifies a user their account status changed (block / deactivate / activate).
+ * @param {'blocked'|'inactive'|'active'} status
+ */
+async function sendAccountStatusEmail(status, toEmail, fullName) {
+  const copy = STATUS_COPY[status];
+  if (!copy) return;
+  const transporter = getTransporter();
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+
+  const html = baseWrapper(`
+    <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">${copy.heading}</h2>
+    <p style="font-size:14px;color:#64748b;margin:0;line-height:1.6;">
+      Hello ${fullName || ''},<br/><br/>${copy.body}
+    </p>
+  `);
+
+  await transporter.sendMail({
+    from,
+    to: toEmail,
+    subject: copy.subject,
+    text: `Hello ${fullName || ''},\n\n${copy.body}`,
+    html,
+  });
+}
+
+module.exports = {
+  sendOtpEmail, sendSignupOtpEmail,
+  sendAdminPasswordResetEmail, sendAccountStatusEmail,
+};

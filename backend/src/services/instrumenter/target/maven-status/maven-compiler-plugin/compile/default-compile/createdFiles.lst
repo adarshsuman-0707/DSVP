@@ -1,5 +1,13 @@
-dsvp\RuntimeShim.class
+dsvp\BSTInstrumentVisitor.class
+dsvp\GraphInstrumentVisitor.class
 dsvp\JavaInstrumenter.class
 dsvp\LinkedListInstrumentVisitor.class
-dsvp\CallTraceInstrumentVisitor.class
 dsvp\ArrayInstrumentVisitor.class
+dsvp\Array2DInstrumentVisitor.class
+dsvp\StackFieldInstrumentVisitor.class
+dsvp\StackInstrumentVisitor.class
+dsvp\QueueInstrumentVisitor.class
+dsvp\RuntimeShim.class
+dsvp\CallTraceInstrumentVisitor.class
+dsvp\QueueFieldInstrumentVisitor.class
+dsvp\GraphInstrumentVisitor$Ctx.class

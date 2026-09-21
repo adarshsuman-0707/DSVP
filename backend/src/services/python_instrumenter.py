@@ -760,6 +760,12 @@ def _make_tracer(source_lines):
             except Exception:
                 pass
 
+            # ── Graph auto-detection (adjacency dict + BFS/DFS traversal) ─
+            try:
+                _detect_and_emit_graph(frame, changed)
+            except Exception:
+                pass
+
         elif event == 'return':
             ret_repr = _safe_repr(arg) if arg is not None else 'None'
             locals_snap = _get_locals(frame)
@@ -895,6 +901,92 @@ class _DSVPArray:
     def __list__(self):     return list(self._d)
 
 
+def _emit2d(op, row, col, val, grid):
+    payload = {"op": op, "row": row, "col": col, "val": val,
+               "grid": [list(r) for r in grid]}
+    _write(payload)
+
+
+# ── _DSVPGrid: wraps a plain 2D list (list of lists) and emits read2d/
+# write2d/init2d events on cell access, mirroring the Java DSVPArray2DInt
+# wrapper class but at runtime via __getitem__/__setitem__ instead of a
+# compile-time class substitution. `grid[i]` returns a _DSVPGridRow proxy
+# bound to that row so `grid[i][j] = v` / `grid[i][j]` still work exactly
+# like plain nested-list indexing while letting the inner access emit the
+# (row, col) event the outer __getitem__ alone can't see.
+class _DSVPGridRow:
+    __slots__ = ("_grid", "_row")
+
+    def __init__(self, grid, row):
+        self._grid = grid
+        self._row = row
+
+    def __getitem__(self, col):
+        return self._grid._get(self._row, col)
+
+    def __setitem__(self, col, val):
+        self._grid._set(self._row, col, val)
+
+    def __len__(self):
+        return len(self._grid._d[self._row])
+
+    def __iter__(self):
+        return iter(self._grid._d[self._row])
+
+    def __repr__(self):     return repr(self._grid._d[self._row])
+    def __str__(self):      return str(self._grid._d[self._row])
+
+    def __eq__(self, other):
+        mine = self._grid._d[self._row]
+        if isinstance(other, _DSVPGridRow):
+            return mine == other._grid._d[other._row]
+        return mine == other
+
+
+class _DSVPGrid:
+    __slots__ = ("_d",)
+
+    def __init__(self, rows, _silent=False):
+        self._d = [list(r) for r in rows]
+        if not _silent:
+            _emit2d("init2d", -1, -1, None, self._d)
+
+    def __getitem__(self, row):
+        if isinstance(row, int):
+            return _DSVPGridRow(self, row)
+        return [list(r) for r in self._d[row]]
+
+    def __setitem__(self, row, val):
+        self._d[row] = list(val._d) if isinstance(val, _DSVPArray) else list(val)
+        _emit2d("write2d", row, -1, None, self._d)
+
+    def _get(self, row, col):
+        val = self._d[row][col]
+        _emit2d("read2d", row, col, val, self._d)
+        return val
+
+    def _set(self, row, col, val):
+        self._d[row][col] = val
+        _emit2d("write2d", row, col, val, self._d)
+
+    def __len__(self):      return len(self._d)
+
+    def __iter__(self):
+        for i in range(len(self._d)):
+            yield _DSVPGridRow(self, i)
+
+    def rows(self):         return len(self._d)
+    def cols(self):         return len(self._d[0]) if self._d else 0
+
+    def __repr__(self):     return repr(self._d)
+    def __str__(self):      return str(self._d)
+
+    def __eq__(self, other):
+        if isinstance(other, _DSVPGrid):
+            return self._d == other._d
+        return self._d == other
+
+
 # ── Helper functions injected into user namespace ─────────────────────────────
 
 def _dsvp_set(arr, idx, val):
@@ -931,6 +1023,15 @@ def _dsvp_make(data):
         return data
     if isinstance(data, (list, range)):
         return _DSVPArray(list(data))
+    return data
+
+
+def _dsvp_make2d(data):
+    if isinstance(data, _DSVPGrid):
+        return data
+    if isinstance(data, list) and data and all(isinstance(r, (list, _DSVPArray)) for r in data):
+        rows = [list(r._d) if isinstance(r, _DSVPArray) else list(r) for r in data]
+        return _DSVPGrid(rows)
     return data
 
 
@@ -1319,6 +1420,281 @@ def _patch_tree_node_class(cls):
     cls.__setattr__ = _dsvp_tree_setattr
 
 
+# ── Graph auto-detection (adjacency-dict BFS/DFS) ──────────────────────────────
+#
+# Scope decision: support the single most common student/interview shape —
+# an adjacency list stored as `dict[node] -> list/set of neighbors` (e.g.
+# `graph = {0: [1, 2], 1: [0, 3], ...}`), plus the standard BFS (queue) /
+# DFS (stack or recursion + explicit `visited`) traversal loop shape that
+# almost universally accompanies it. No DSVP-specific API is required — we
+# just watch local variables each traced line (same technique already used
+# for LinkedList/BST auto-detection above) and recognize:
+#   - a dict local whose values all look like neighbor collections -> "adj"
+#   - a set/list/dict local named/shaped like a visited-set -> "visited"
+#   - a list/deque local shaped like a BFS queue or DFS stack -> "frontier"
+# Whenever visited or frontier changes on a traced line, we emit a
+# "graph_step" event carrying the full node/edge list plus visited/frontier
+# snapshots, which the frontend GraphVisualizer animates (active node,
+# visited color, frontier color, unvisited neutral).
+
+_GRAPH_ADJ = None          # last-seen adjacency dict object (by identity)
+_GRAPH_ADJ_ID = None
+_GRAPH_LAST_VISITED = None
+_GRAPH_LAST_FRONTIER = None
+_GRAPH_SEEN_INIT = False
+_GRAPH_LAST_EDGE_KEY = None   # sorted tuple of (u,w) edges as of the last emit —
+                               # tracks graph CONSTRUCTION independently of
+                               # visited/frontier, so adding edges is visible
+                               # before any traversal starts (see below).
+
+
+def _dsvp_plain_list(x):
+    if isinstance(x, _DSVPArray):
+        return list(x._d)
+    if isinstance(x, (set, frozenset)):
+        return list(x)
+    if isinstance(x, dict):
+        return list(x.keys())
+    try:
+        return list(x)
+    except Exception:
+        return []
+
+
+def _is_graph_adj_dict(v):
+    """dict[node] -> list/set/tuple of neighbor nodes, non-empty, hashable keys."""
+    if not isinstance(v, dict) or len(v) == 0:
+        return False
+    try:
+        sample = list(v.values())[:5]
+        if not sample:
+            return False
+        for x in sample:
+            if not isinstance(x, (list, set, tuple, _DSVPArray)):
+                return False
+        # keys should be simple hashables (int/str), not objects
+        for k in list(v.keys())[:5]:
+            if not isinstance(k, (int, str)):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _is_visited_like(v):
+    return isinstance(v, (set, frozenset)) or (
+        isinstance(v, dict) and all(isinstance(x, bool) for x in list(v.values())[:5])
+    ) or isinstance(v, _DSVPArray)
+
+
+def _is_frontier_like(v):
+    if isinstance(v, _DSVPArray):
+        return True
+    if isinstance(v, list):
+        return True
+    # collections.deque
+    if type(v).__name__ == 'deque':
+        return True
+    return False
+
+
+def _is_graph_adj_list(v):
+    """list/_DSVPArray of lists/sets, index-addressed: outer[i] = neighbors of
+    node i. Conservative on purpose (this is the biggest false-positive risk
+    in graph auto-detection): every inner value must be a plain int in
+    [0, len(outer)) — i.e. a plausible node id into the SAME outer list — and
+    at least one inner collection must be non-empty. This rejects an
+    unrelated jagged/2D list (e.g. a DP table or matrix of arbitrary ints)
+    almost always, since those values are rarely all valid self-indices."""
+    if isinstance(v, _DSVPArray):
+        items = list(v._d)
+    elif isinstance(v, list):
+        items = v
+    else:
+        return False
+    n = len(items)
+    if n < 2:
+        return False
+    any_edge = False
+    all_values = set()
+    all_same_length = True
+    for inner in items:
+        if isinstance(inner, _DSVPArray):
+            inner_list = list(inner._d)
+        elif isinstance(inner, (list, set, tuple)):
+            inner_list = list(inner)
+        else:
+            return False
+        if len(inner_list) != n:
+            all_same_length = False
+        for x in inner_list:
+            if not isinstance(x, int) or isinstance(x, bool) or x < 0 or x >= n:
+                return False
+            all_values.add(x)
+        if inner_list:
+            any_edge = True
+    # A freshly-initialized matrix/2D-array (e.g. `[[0]*cols for _ in
+    # range(rows)]`) is indistinguishable from a real adjacency list by
+    # shape alone — every "neighbor" happens to be a valid in-range index
+    # because they're all the same placeholder value (usually 0). Real
+    # adjacency lists reference more than one distinct node id across the
+    # structure, so reject the single-distinct-value case as a false
+    # positive rather than a graph.
+    if len(all_values) < 2:
+        return False
+    # Real adjacency lists are built one node at a time and are almost
+    # always jagged (each node has its own neighbor count) — an n×n matrix
+    # where every row happens to have exactly n entries (a square matrix
+    # being filled cell-by-cell, e.g. a DP table or grid) is far more
+    # likely than a complete graph with exactly n neighbors per node, so
+    # reject the perfectly-rectangular case too.
+    if all_same_length:
+        return False
+    return any_edge
+
+
+def _graph_adj_pairs(adj):
+    """Yield (node_id, [neighbor,...]) for either a dict-shaped or
+    list-shaped adjacency structure, so downstream code doesn't care which."""
+    if isinstance(adj, dict):
+        for u, nbrs in adj.items():
+            yield u, _dsvp_plain_list(nbrs)
+    else:
+        items = list(adj._d) if isinstance(adj, _DSVPArray) else adj
+        for i, nbrs in enumerate(items):
+            yield i, _dsvp_plain_list(nbrs)
+
+
+def _graph_adj_nodes(adj):
+    if isinstance(adj, dict):
+        return sorted(adj.keys(), key=lambda k: str(k))
+    items = list(adj._d) if isinstance(adj, _DSVPArray) else adj
+    return list(range(len(items)))
+
+
+def _find_graph_adj(frame_locals):
+    for k, v in frame_locals.items():
+        if _is_graph_adj_dict(v):
+            return k, v
+    for k, v in frame_locals.items():
+        if _is_graph_adj_list(v):
+            return k, v
+    return None, None
+
+
+def _find_visited(frame_locals, adj_keys):
+    # Prefer a variable literally named 'visited', else any set/bool-dict
+    # whose contents are a subset of the graph's node ids.
+    best = None
+    for k, v in frame_locals.items():
+        if not _is_visited_like(v):
+            continue
+        if k == 'visited':
+            return k, v
+        if best is None:
+            best = (k, v)
+    return best if best else (None, None)
+
+
+def _find_frontier(frame_locals, exclude_names):
+    for name in ('queue', 'q', 'stack', 'frontier', 'to_visit', 'dq'):
+        v = frame_locals.get(name)
+        if v is not None and name not in exclude_names and _is_frontier_like(v):
+            return name, v
+    return None, None
+
+
+def _emit_graph(op, active_id, adj, visited, frontier, desc):
+    nodes = _graph_adj_nodes(adj)
+    edges = []
+    for u, nbrs in _graph_adj_pairs(adj):
+        for w in nbrs:
+            edges.append({"from": u, "to": w})
+    _write({
+        "op": op,
+        "nodes": [{"id": n} for n in nodes],
+        "edges": edges,
+        "visited": _dsvp_plain_list(visited) if visited is not None else [],
+        "frontier": _dsvp_plain_list(frontier) if frontier is not None else [],
+        "activeId": active_id,
+        "desc": desc,
+    })
+
+
+def _detect_and_emit_graph(frame, changed):
+    global _GRAPH_ADJ, _GRAPH_ADJ_ID, _GRAPH_LAST_VISITED, _GRAPH_LAST_FRONTIER, \
+        _GRAPH_SEEN_INIT, _GRAPH_LAST_EDGE_KEY
+
+    fl = frame.f_locals
+    adj_name, adj = _find_graph_adj(fl)
+    if adj is None:
+        return
+
+    if id(adj) != _GRAPH_ADJ_ID:
+        _GRAPH_ADJ_ID = id(adj)
+        _GRAPH_ADJ = adj
+        _GRAPH_LAST_VISITED = None
+        _GRAPH_LAST_FRONTIER = None
+        _GRAPH_SEEN_INIT = False
+        _GRAPH_LAST_EDGE_KEY = None
+
+    visited_name, visited = _find_visited(fl, {adj_name})
+    frontier_name, frontier = _find_frontier(fl, {adj_name, visited_name or ''})
+
+    edge_key = tuple(sorted(
+        (u, w) for u, nbrs in _graph_adj_pairs(adj) for w in nbrs
+    ))
+
+    if not _GRAPH_SEEN_INIT:
+        _GRAPH_SEEN_INIT = True
+        _GRAPH_LAST_EDGE_KEY = edge_key
+        _emit_graph("graph_init", None, adj, visited, frontier, f"Graph {adj_name} initialized ({len(_graph_adj_nodes(adj))} nodes)")
+        return
+
+    visited_list = _dsvp_plain_list(visited) if visited is not None else []
+    frontier_list = _dsvp_plain_list(frontier) if frontier is not None else []
+    structure_changed = edge_key != _GRAPH_LAST_EDGE_KEY
+    traversal_changed = visited_list != _GRAPH_LAST_VISITED or frontier_list != _GRAPH_LAST_FRONTIER
+
+    if not structure_changed and not traversal_changed:
+        return
+
+    # Structural change (a node/edge was added, e.g. `adj[u].append(w)` or
+    # `adj[u] = [...]`) — surfaced as its OWN step, independent of
+    # visited/frontier, so building the graph animates edge-by-edge instead
+    # of the whole structure silently assembling off-screen and only
+    # appearing, already complete, the instant traversal begins.
+    if structure_changed and not traversal_changed:
+        prev_edges = set(_GRAPH_LAST_EDGE_KEY or ())
+        new_edges = [e for e in edge_key if e not in prev_edges]
+        _GRAPH_LAST_EDGE_KEY = edge_key
+        if new_edges:
+            u, w = new_edges[-1]
+            _emit_graph("graph_build", w, adj, visited, frontier, f"Added edge {u} -> {w}")
+        else:
+            _emit_graph("graph_build", None, adj, visited, frontier, f"Graph {adj_name} updated")
+        return
+
+    _GRAPH_LAST_EDGE_KEY = edge_key
+
+    # Determine "active" node: newest addition to visited, else front/top of frontier
+    active = None
+    if _GRAPH_LAST_VISITED is not None:
+        newly = [x for x in visited_list if x not in _GRAPH_LAST_VISITED]
+        if newly:
+            active = newly[-1]
+    if active is None and visited_list and _GRAPH_LAST_VISITED is None:
+        active = visited_list[-1]
+    if active is None and frontier_list:
+        active = frontier_list[0]
+
+    _GRAPH_LAST_VISITED = visited_list
+    _GRAPH_LAST_FRONTIER = frontier_list
+
+    desc = f"Visit {active}" if active is not None else "Traversal step"
+    _emit_graph("graph_step", active, adj, visited_list, frontier_list, desc)
+
+
 # ── AST transformer ───────────────────────────────────────────────────────────
 
 class _DSVPTransformer(ast.NodeTransformer):
@@ -1363,7 +1739,13 @@ class _DSVPTransformer(ast.NodeTransformer):
         if (len(node.targets) == 1 and
                 isinstance(node.targets[0], ast.Name)):
             val = node.value
-            if self._is_list_like(val):
+            if self._is_2d_list_like(val):
+                node.value = ast.Call(
+                    func=ast.Name(id="_dsvp_make2d", ctx=ast.Load()),
+                    args=[val],
+                    keywords=[],
+                )
+            elif self._is_list_like(val):
                 node.value = ast.Call(
                     func=ast.Name(id="_dsvp_make", ctx=ast.Load()),
                     args=[val],
@@ -1436,6 +1818,22 @@ class _DSVPTransformer(ast.NodeTransformer):
             return True
         return False
 
+    def _is_2d_list_like(self, node):
+        """Detects a 2D-array literal/comprehension so it gets wrapped as a
+        _DSVPGrid instead of a flat _DSVPArray, e.g.:
+            grid = [[0] * cols for _ in range(rows)]
+            grid = [[1, 2], [3, 4]]
+        """
+        def _row_like(elt):
+            return (isinstance(elt, (ast.List, ast.ListComp)) or
+                    (isinstance(elt, ast.BinOp) and isinstance(elt.op, ast.Mult)))
+
+        if isinstance(node, ast.List):
+            return bool(node.elts) and all(_row_like(e) for e in node.elts)
+        if isinstance(node, ast.ListComp):
+            return _row_like(node.elt)
+        return False
+
     def _is_subscript(self, node):
         return isinstance(node, ast.Subscript)
 
@@ -1490,6 +1888,8 @@ def main():
         "_dsvp_compare":  _dsvp_compare,
         "_dsvp_read":     _dsvp_read,
         "Array":          Array,
+        "_DSVPGrid":      _DSVPGrid,
+        "_dsvp_make2d":   _dsvp_make2d,
         # LL helpers (auto-detection — no explicit import needed by user)
         "_LL_REGISTRY":   _LL_REGISTRY,
         "_LL_HEADS":      _LL_HEADS,
