@@ -168,10 +168,20 @@ async function updateUserPremium(req, res, next) {
     const { id }        = req.params;
     const { isPremium } = req.body;
     const pool          = await getPool();
+    const expiryDate    = isPremium ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
     await pool.request()
       .input('UserId',    sql.Int, id)
       .input('IsPremium', sql.Bit, isPremium ? 1 : 0)
-      .query(`UPDATE dbo.Users SET IsPremium=@IsPremium, UpdatedAt=SYSUTCDATETIME() WHERE UserId=@UserId`);
+      .input('SubscriptionPlan', sql.NVarChar(20), isPremium ? 'premium' : 'free')
+      .input('SubscriptionExpiry', sql.DateTime, expiryDate)
+      .query(`
+        UPDATE dbo.Users
+        SET IsPremium = @IsPremium,
+            SubscriptionPlan = @SubscriptionPlan,
+            SubscriptionExpiry = @SubscriptionExpiry,
+            UpdatedAt = SYSUTCDATETIME()
+        WHERE UserId = @UserId
+      `);
 
     await logAudit(req, { action: 'USER_UPDATED', targetType: 'user', targetId: +id, description: `Premium set to ${!!isPremium}` });
     res.json({ message: 'Premium status updated' });
@@ -534,16 +544,26 @@ async function getPaymentDetail(req, res, next) {
 // POST /api/admin/payments/:id/refund   body: { amount?: number, reason?: string }
 async function refundPayment(req, res, next) {
   try {
-    const razorpay = require('../services/razorpayClient');
     const payment = await PaymentModel.findById(req.params.id);
     if (!payment) return res.status(404).json({ message: 'Payment not found' });
     if (payment.Status !== 'success') return res.status(400).json({ message: 'Only successful payments can be refunded' });
     if (!payment.ProviderPaymentId) return res.status(400).json({ message: 'No provider payment id on record' });
 
     const { amount, reason } = req.body;
-    const refund = await razorpay.payments.refund(payment.ProviderPaymentId, amount ? { amount: Math.round(amount * 100) } : {});
-
     const isPartial = amount && amount < payment.Amount;
+
+    // Manually-seeded/test payments (ProviderPaymentId starting with
+    // "pay_test_", never a real Razorpay id) don't exist on Razorpay's
+    // side, so calling the real refund API always 404s. For those, just
+    // record the refund locally instead of hitting Razorpay.
+    const isFakePayment = payment.ProviderPaymentId.startsWith('pay_test_');
+
+    let refund = null;
+    if (!isFakePayment) {
+      const razorpay = require('../services/razorpayClient');
+      refund = await razorpay.payments.refund(payment.ProviderPaymentId, amount ? { amount: Math.round(amount * 100) } : {});
+    }
+
     await PaymentModel.updateStatus(payment.PaymentId, {
       status: isPartial ? 'partially_refunded' : 'refunded',
       failureReason: reason || null,
@@ -551,7 +571,7 @@ async function refundPayment(req, res, next) {
 
     await logAudit(req, {
       action: 'REFUND_PROCESSED', targetType: 'payment', targetId: payment.PaymentId,
-      description: `Refund ${refund.id} for ${payment.Currency} ${amount || payment.Amount}${reason ? ' — ' + reason : ''}`,
+      description: `Refund ${refund ? refund.id : '(local, test payment)'} for ${payment.Currency} ${amount || payment.Amount}${reason ? ' — ' + reason : ''}`,
     });
 
     res.json({ message: 'Refund processed', refund });

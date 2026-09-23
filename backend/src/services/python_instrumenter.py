@@ -987,6 +987,284 @@ class _DSVPGrid:
         return self._d == other
 
 
+def _emit_hash(op, size, buckets, active_bucket, active_key, found, val=None,
+               mode='chaining', tombstones=None, probe_seq=None):
+    payload = {
+        "op": op,
+        "size": size,
+        "mode": mode,
+        "buckets": buckets,
+        "activeBucket": active_bucket,
+        "activeKey": active_key,
+        "found": found,
+        "val": val,
+        "tombstones": tombstones if tombstones is not None else [],
+        "probeSeq": probe_seq if probe_seq is not None else [],
+    }
+    _write(payload)
+
+
+_TOMBSTONE = object()
+
+
+# ── _DSVPHashTable: separate-chaining + open-addressing hash table wrapper ─────
+class _DSVPHashTable:
+    __slots__ = ("_size", "_buckets", "_hash_fn", "_hash_fn2", "_mode", "_slots")
+
+    def __init__(self, size, hash_fn=None, mode='chaining', hash_fn2=None):
+        self._size = size
+        self._mode = mode
+        self._hash_fn = hash_fn or (lambda k: hash(k) % size)
+        if mode == 'chaining':
+            self._buckets = [[] for _ in range(size)]
+            self._slots = None
+            self._hash_fn2 = None
+        else:
+            self._slots = [None] * size
+            self._buckets = None
+            if hash_fn2 is not None:
+                self._hash_fn2 = hash_fn2
+            elif size > 1:
+                self._hash_fn2 = lambda k: 1 + (hash(k) % (size - 1))
+            else:
+                self._hash_fn2 = lambda k: 1
+        _emit_hash("hash_init", self._size, self._snapshot_buckets(), None, None, None,
+                   mode=self._mode, tombstones=self._tombstone_list())
+
+    # ---- chaining helpers ----
+    def _snapshot_buckets(self):
+        if self._mode == 'chaining':
+            return [[{"key": str(k), "val": str(v)} for k, v in bucket] for bucket in self._buckets]
+        else:
+            out = []
+            for slot in self._slots:
+                if slot is None or slot is _TOMBSTONE:
+                    out.append([])
+                else:
+                    k, v = slot
+                    out.append([{"key": str(k), "val": str(v)}])
+            return out
+
+    def _tombstone_list(self):
+        if self._mode == 'chaining':
+            return []
+        return [i for i, s in enumerate(self._slots) if s is _TOMBSTONE]
+
+    # ---- open addressing probe sequence ----
+    def _probe_index(self, key, i):
+        h1 = self._hash_fn(key) % self._size
+        if self._mode == 'linear':
+            return (h1 + i) % self._size
+        elif self._mode == 'quadratic':
+            return (h1 + i * i) % self._size
+        elif self._mode == 'double':
+            h2 = self._hash_fn2(key)
+            return (h1 + i * h2) % self._size
+        else:
+            raise ValueError(f"Unknown mode: {self._mode}")
+
+    def put(self, key, val):
+        if self._mode == 'chaining':
+            idx = self._hash_fn(key) % self._size
+            bucket = self._buckets[idx]
+            for i, (k, _v) in enumerate(bucket):
+                if k == key:
+                    bucket[i] = (k, val)
+                    break
+            else:
+                bucket.append((key, val))
+            _emit_hash("hash_put", self._size, self._snapshot_buckets(), idx, str(key), None, str(val),
+                       mode=self._mode)
+            return
+
+        probe_seq = []
+        first_tombstone = None
+        for i in range(self._size):
+            idx = self._probe_index(key, i)
+            slot = self._slots[idx]
+            if slot is None:
+                probe_seq.append({"index": idx, "occupied": False})
+                target = first_tombstone if first_tombstone is not None else idx
+                self._slots[target] = (key, val)
+                _emit_hash("hash_put", self._size, self._snapshot_buckets(), target, str(key), None, str(val),
+                           mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+                return
+            elif slot is _TOMBSTONE:
+                probe_seq.append({"index": idx, "occupied": False})
+                if first_tombstone is None:
+                    first_tombstone = idx
+                # keep probing to check for existing key further along
+            else:
+                k, _v = slot
+                if k == key:
+                    probe_seq.append({"index": idx, "occupied": True})
+                    self._slots[idx] = (key, val)
+                    _emit_hash("hash_put", self._size, self._snapshot_buckets(), idx, str(key), None, str(val),
+                               mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+                    return
+                else:
+                    probe_seq.append({"index": idx, "occupied": True})
+                    if i < self._size - 1:
+                        _emit_hash("hash_probe", self._size, self._snapshot_buckets(), idx, str(key), None, None,
+                                   mode=self._mode, tombstones=self._tombstone_list(), probe_seq=list(probe_seq))
+        if first_tombstone is not None:
+            self._slots[first_tombstone] = (key, val)
+            _emit_hash("hash_put", self._size, self._snapshot_buckets(), first_tombstone, str(key), None, str(val),
+                       mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+            return
+        raise RuntimeError(f"Hash table full: no slot available for key {key!r}")
+
+    def get(self, key):
+        if self._mode == 'chaining':
+            idx = self._hash_fn(key) % self._size
+            bucket = self._buckets[idx]
+            for k, v in bucket:
+                if k == key:
+                    _emit_hash("hash_get", self._size, self._snapshot_buckets(), idx, str(key), True, str(v),
+                               mode=self._mode)
+                    return v
+            _emit_hash("hash_get", self._size, self._snapshot_buckets(), idx, str(key), False, None,
+                       mode=self._mode)
+            return None
+
+        probe_seq = []
+        for i in range(self._size):
+            idx = self._probe_index(key, i)
+            slot = self._slots[idx]
+            if slot is None:
+                probe_seq.append({"index": idx, "occupied": False})
+                _emit_hash("hash_get", self._size, self._snapshot_buckets(), idx, str(key), False, None,
+                           mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+                return None
+            elif slot is _TOMBSTONE:
+                probe_seq.append({"index": idx, "occupied": False})
+                if i < self._size - 1:
+                    _emit_hash("hash_probe", self._size, self._snapshot_buckets(), idx, str(key), None, None,
+                               mode=self._mode, tombstones=self._tombstone_list(), probe_seq=list(probe_seq))
+            else:
+                k, v = slot
+                if k == key:
+                    probe_seq.append({"index": idx, "occupied": True})
+                    _emit_hash("hash_get", self._size, self._snapshot_buckets(), idx, str(key), True, str(v),
+                               mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+                    return v
+                else:
+                    probe_seq.append({"index": idx, "occupied": True})
+                    if i < self._size - 1:
+                        _emit_hash("hash_probe", self._size, self._snapshot_buckets(), idx, str(key), None, None,
+                                   mode=self._mode, tombstones=self._tombstone_list(), probe_seq=list(probe_seq))
+        _emit_hash("hash_get", self._size, self._snapshot_buckets(), None, str(key), False, None,
+                   mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+        return None
+
+    def remove(self, key):
+        if self._mode == 'chaining':
+            idx = self._hash_fn(key) % self._size
+            bucket = self._buckets[idx]
+            for i, (k, _v) in enumerate(bucket):
+                if k == key:
+                    bucket.pop(i)
+                    _emit_hash("hash_remove", self._size, self._snapshot_buckets(), idx, str(key), True,
+                               mode=self._mode)
+                    return
+            _emit_hash("hash_remove", self._size, self._snapshot_buckets(), idx, str(key), False,
+                       mode=self._mode)
+            return
+
+        probe_seq = []
+        for i in range(self._size):
+            idx = self._probe_index(key, i)
+            slot = self._slots[idx]
+            if slot is None:
+                probe_seq.append({"index": idx, "occupied": False})
+                _emit_hash("hash_remove", self._size, self._snapshot_buckets(), idx, str(key), False, None,
+                           mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+                return
+            elif slot is _TOMBSTONE:
+                probe_seq.append({"index": idx, "occupied": False})
+                if i < self._size - 1:
+                    _emit_hash("hash_probe", self._size, self._snapshot_buckets(), idx, str(key), None, None,
+                               mode=self._mode, tombstones=self._tombstone_list(), probe_seq=list(probe_seq))
+            else:
+                k, v = slot
+                if k == key:
+                    probe_seq.append({"index": idx, "occupied": True})
+                    self._slots[idx] = _TOMBSTONE
+                    _emit_hash("hash_remove", self._size, self._snapshot_buckets(), idx, str(key), True, str(v),
+                               mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+                    return
+                else:
+                    probe_seq.append({"index": idx, "occupied": True})
+                    if i < self._size - 1:
+                        _emit_hash("hash_probe", self._size, self._snapshot_buckets(), idx, str(key), None, None,
+                                   mode=self._mode, tombstones=self._tombstone_list(), probe_seq=list(probe_seq))
+        _emit_hash("hash_remove", self._size, self._snapshot_buckets(), None, str(key), False, None,
+                   mode=self._mode, tombstones=self._tombstone_list(), probe_seq=probe_seq)
+
+    def __setitem__(self, key, val):
+        self.put(key, val)
+
+    def __getitem__(self, key):
+        if self._mode == 'chaining':
+            idx = self._hash_fn(key) % self._size
+            for k, v in self._buckets[idx]:
+                if k == key:
+                    return v
+            raise KeyError(key)
+        for i in range(self._size):
+            idx = self._probe_index(key, i)
+            slot = self._slots[idx]
+            if slot is None:
+                raise KeyError(key)
+            elif slot is _TOMBSTONE:
+                continue
+            else:
+                k, v = slot
+                if k == key:
+                    return v
+        raise KeyError(key)
+
+    def __delitem__(self, key):
+        self.remove(key)
+
+    def __contains__(self, key):
+        if self._mode == 'chaining':
+            idx = self._hash_fn(key) % self._size
+            return any(k == key for k, _v in self._buckets[idx])
+        for i in range(self._size):
+            idx = self._probe_index(key, i)
+            slot = self._slots[idx]
+            if slot is None:
+                return False
+            elif slot is _TOMBSTONE:
+                continue
+            else:
+                k, _v = slot
+                if k == key:
+                    return True
+        return False
+
+    def __len__(self):
+        if self._mode == 'chaining':
+            return sum(len(b) for b in self._buckets)
+        return sum(1 for s in self._slots if s is not None and s is not _TOMBSTONE)
+
+    def __repr__(self):
+        if self._mode == 'chaining':
+            items = ', '.join(f'{k!r}: {v!r}' for b in self._buckets for k, v in b)
+        else:
+            items = ', '.join(f'{k!r}: {v!r}' for s in self._slots if s is not None and s is not _TOMBSTONE for k, v in [s])
+        return '{' + items + '}'
+
+    def __str__(self):
+        return self.__repr__()
+
+
+def HashTable(size, hash_fn=None, mode='chaining', hash_fn2=None):
+    """Explicit HashTable() factory — chaining or open-addressing (linear/quadratic/double)."""
+    return _DSVPHashTable(size, hash_fn, mode, hash_fn2)
+
+
 # ── Helper functions injected into user namespace ─────────────────────────────
 
 def _dsvp_set(arr, idx, val):
@@ -1890,6 +2168,8 @@ def main():
         "Array":          Array,
         "_DSVPGrid":      _DSVPGrid,
         "_dsvp_make2d":   _dsvp_make2d,
+        "HashTable":      HashTable,
+        "_DSVPHashTable": _DSVPHashTable,
         # LL helpers (auto-detection — no explicit import needed by user)
         "_LL_REGISTRY":   _LL_REGISTRY,
         "_LL_HEADS":      _LL_HEADS,

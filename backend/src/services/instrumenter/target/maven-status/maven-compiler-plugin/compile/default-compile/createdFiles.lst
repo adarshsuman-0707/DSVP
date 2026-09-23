@@ -3,7 +3,7 @@ dsvp\GraphInstrumentVisitor.class
 dsvp\JavaInstrumenter.class
 dsvp\LinkedListInstrumentVisitor.class
 dsvp\ArrayInstrumentVisitor.class
-dsvp\Array2DInstrumentVisitor.class
+dsvp\HashingInstrumentVisitor.class
 dsvp\StackFieldInstrumentVisitor.class
 dsvp\StackInstrumentVisitor.class
 dsvp\QueueInstrumentVisitor.class

@@ -8,7 +8,7 @@ import {
   PageHeader, Card, Btn, Badge, THead, TRow, TD, Avatar,
   Spinner, ErrorBanner, EmptyState, fmtDate, fmtDateTime, fmtRupee,
 } from './ui';
-
+import { useTheme } from '../../context/ThemeContext';
 const TABS = ['Overview', 'Activity', 'Progress', 'Modules', 'Submissions', 'Payments', 'Feedback'];
 
 export default function UserDetailPage() {
@@ -20,7 +20,7 @@ export default function UserDetailPage() {
   const [error,   setError]   = useState('');
   const [tab,     setTab]     = useState(() => TABS.includes(searchParams.get('tab')) ? searchParams.get('tab') : 'Overview');
   const [busy,    setBusy]    = useState(false);
-
+  const { T } = useTheme();
   const load = useCallback(() => {
     setLoading(true); setError('');
     getAdminUserDetail(id)
@@ -100,8 +100,8 @@ export default function UserDetailPage() {
             <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
               <Badge variant={data.user.Role === 'admin' ? 'admin' : 'user'}>{data.user.Role}</Badge>
               <Badge variant={data.user.Status || 'active'}>{data.user.Status || 'active'}</Badge>
-              <Badge variant={data.user.IsPremium ? 'premium' : 'free'}>{data.user.IsPremium ? '⭐ Premium' : 'Free'}</Badge>
-              {data.user.SubscriptionPlan && <Badge variant="default">{data.user.SubscriptionPlan}</Badge>}
+              {/* <Badge variant={data.user.IsPremium ? 'premium' : 'free'}>{data.user.IsPremium ? '⭐ Premium' : 'Free'}</Badge> */}
+              {data.user.SubscriptionPlan && <Badge variant="default">Plan : {data.user.SubscriptionPlan}</Badge>}
             </div>
 
             {/* Tab bar */}
@@ -139,13 +139,14 @@ function OverviewPane({ user }) {
     ['Subscription Plan', user.SubscriptionPlan || 'free'],
     ['Subscription Expiry', user.SubscriptionExpiry ? fmtDate(user.SubscriptionExpiry) : '—'],
   ];
+    const { T } = useTheme();
   return (
     <Card style={{ padding: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
         {fields.map(([k, v]) => (
           <div key={k}>
             <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>{k}</div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{v}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>{v}</div>
           </div>
         ))}
       </div>
@@ -154,6 +155,7 @@ function OverviewPane({ user }) {
 }
 
 function ActivityPane({ rows }) {
+    const { T } = useTheme();
   return (
     <Card>
       <div style={{ overflowX: 'auto' }}>
@@ -165,8 +167,8 @@ function ActivityPane({ rows }) {
             ) : rows.map(a => (
               <TRow key={`${a.Type}-${a.ActivityId}`}>
                 <TD><Badge variant="default">{a.Type}</Badge></TD>
-                <TD style={{ color: '#64748b' }}>{a.Detail || '—'}</TD>
-                <TD style={{ color: '#94a3b8' }}>{fmtDateTime(a.CreatedAt)}</TD>
+                <TD style={{ color: T.text }}>{a.Detail || '—'}</TD>
+                <TD style={{ color: T.text   }}>{fmtDateTime(a.CreatedAt)}</TD>
               </TRow>
             ))}
           </tbody>
@@ -177,6 +179,7 @@ function ActivityPane({ rows }) {
 }
 
 function ProgressPane({ rows }) {
+  
   return (
     <Card>
       <div style={{ overflowX: 'auto' }}>

@@ -5,7 +5,15 @@ const ARRAY2D_OPS = new Set(['init2d', 'read2d', 'write2d']);
 const EXEC_OPS = new Set(['call', 'line', 'return']);
 const LL_OPS = new Set(['ll_snap', 'll_init', 'll_update', 'll_insert', 'll_delete', 'll_traverse']);
 const BST_OPS = new Set(['bst_snap', 'bst_init', 'bst_update', 'bst_insert', 'bst_delete', 'bst_traverse']);
+// AVL reuses the exact same raw bst_snap trace events emitted by
+// BSTInstrumentVisitor (an AVL node has the same left/right/value shape as
+// a plain BST node) — the normalizer just interprets them differently
+// (buildAVLEvt below) when moduleSlug === 'avl-tree', deriving height/balance
+// factor and detecting rotations structurally from consecutive snapshots
+// instead of trusting any particular user method/field name.
+const AVL_OPS = new Set(['avl_snap', 'ROTATE_LEFT', 'ROTATE_RIGHT']);
 const GRAPH_OPS = new Set(['graph_init', 'graph_step', 'graph_build']);
+const HASH_OPS = new Set(['hash_init', 'hash_put', 'hash_get', 'hash_remove', 'hash_probe']);
 
 function buildTraceEvents({ language, rawTrace, moduleSlug, userOutput }) {
   if (!rawTrace || !Array.isArray(rawTrace.steps)) return [];
@@ -15,6 +23,9 @@ function buildTraceEvents({ language, rawTrace, moduleSlug, userOutput }) {
   }
   if (moduleSlug === 'bst') {
     return compactLLEvents(events, BST_OPS);
+  }
+  if (moduleSlug === 'avl-tree') {
+    return compactLLEvents(events, AVL_OPS);
   }
   if (moduleSlug === 'graph') {
     return compactGraphEvents(events);
@@ -124,6 +135,7 @@ function normalizeAll(steps, userOutput, moduleSlug) {
     lastLLSnap: [],   // most recent linked-list snapshot
     lastBSTSnap: [],   // most recent tree snapshot
     lastGraphState: { nodes: [], edges: [], visited: [], frontier: [] },
+    lastHashState: { buckets: [], size: 0 },
     lineNo: null,
   };
 
@@ -155,8 +167,11 @@ function normalizeAll(steps, userOutput, moduleSlug) {
     }
 
     if (BST_OPS.has(op)) {
-      const evt = buildBSTEvt(s, stepNo, op, ctx, userOutput);
-      ctx.lastBSTSnap = evt.treeState;
+      const rawNodes = Array.isArray(s.nodes) ? s.nodes : [...(ctx.lastBSTSnap || [])];
+      const evt = (ctx.moduleSlug === 'avl-tree')
+        ? buildAVLEvt(s, stepNo, rawNodes, ctx, userOutput)
+        : buildBSTEvt(s, stepNo, op, ctx, userOutput);
+      ctx.lastBSTSnap = rawNodes;
       events.push(evt);
       continue;
     }
@@ -164,6 +179,13 @@ function normalizeAll(steps, userOutput, moduleSlug) {
     if (GRAPH_OPS.has(op)) {
       const evt = buildGraphEvt(s, stepNo, op, ctx, userOutput);
       ctx.lastGraphState = { nodes: evt.graphNodes, edges: evt.graphEdges, visited: evt.graphVisited, frontier: evt.graphFrontier };
+      events.push(evt);
+      continue;
+    }
+
+    if (HASH_OPS.has(op)) {
+      const evt = buildHashEvt(s, stepNo, op, ctx, userOutput);
+      ctx.lastHashState = { buckets: evt.hashState, size: evt.tableSize, mode: evt.hashMode };
       events.push(evt);
       continue;
     }
@@ -274,6 +296,66 @@ function buildArray2DEvt(s, stepNo, op, ctx, userOutput) {
   });
 }
 
+/* ── Hash Table event builder ─────────────────────────────────────────── */
+// Separate-chaining: `buckets` is an array of arrays of {key, val} pairs.
+// Open addressing (linear/quadratic/double): same `buckets` shape, but each
+// slot holds at most one entry — an empty array means the slot is free
+// (or a tombstone, see `tombstones`). `probeSeq` is the full, cumulative
+// list of probe attempts for the CURRENT operation only (reset by the
+// container at the start of every put/get/remove call) — the frontend
+// doesn't need to track probe history itself, every hash_probe/terminal
+// event already carries the complete trail up to that point.
+// Both languages emit key/val as strings for a consistent display
+// regardless of the user's actual key/value types.
+function buildHashEvt(s, stepNo, op, ctx, userOutput) {
+  const buckets = Array.isArray(s.buckets) ? s.buckets : [...(ctx.lastHashState.buckets || [])];
+  const tableSize = typeof s.size === 'number' ? s.size : (ctx.lastHashState.size || buckets.length);
+  const mode = typeof s.mode === 'string' ? s.mode : (ctx.lastHashState.mode || 'chaining');
+  const activeBucket = (typeof s.activeBucket === 'number' && s.activeBucket >= 0) ? s.activeBucket : null;
+  const activeKey = s.activeKey !== undefined && s.activeKey !== null ? String(s.activeKey) : null;
+  const found = typeof s.found === 'boolean' ? s.found : null;
+  const value = s.val !== undefined && s.val !== null ? s.val : null;
+  const tombstones = Array.isArray(s.tombstones) ? s.tombstones : [];
+  const probeSeq = Array.isArray(s.probeSeq) ? s.probeSeq : [];
+  let description = '';
+
+  switch (op) {
+    case 'hash_init':
+      description = `Hash table initialized (${tableSize} slots, ${mode})`;
+      break;
+    case 'hash_probe': {
+      const last = probeSeq[probeSeq.length - 1];
+      const n = probeSeq.length;
+      description = last?.occupied
+        ? `Probe #${n}: slot[${activeBucket}] occupied — collision, trying next`
+        : `Probe #${n}: slot[${activeBucket}] empty`;
+      break;
+    }
+    case 'hash_put':
+      description = activeBucket != null
+        ? `put(${activeKey}, ${value})  →  bucket[${activeBucket}]${probeSeq.length > 1 ? ` (after ${probeSeq.length} probes)` : ''}`
+        : `put(${activeKey}, ${value})`;
+      break;
+    case 'hash_get':
+      description = found
+        ? `get(${activeKey})  →  ${value}  (bucket[${activeBucket}])`
+        : `get(${activeKey})  →  not found`;
+      break;
+    case 'hash_remove':
+      description = found
+        ? `remove(${activeKey})  (was in bucket[${activeBucket}])`
+        : `remove(${activeKey})  →  not found`;
+      break;
+    default:
+      description = `Step ${stepNo}`;
+  }
+
+  return base(stepNo, op, 'hashing', description, ctx, userOutput, {
+    hashState: buckets, tableSize, hashMode: mode, activeBucket, activeKey, found, value,
+    hashTombstones: tombstones, hashProbeSeq: probeSeq,
+  });
+}
+
 /* ── Linked-List event builder ────────────────────────────────────────── */
 function buildLLEvt(s, stepNo, op, ctx, userOutput) {
   // nodes: [{id, val, nextId, prevId?, isHead, isTail?}, ...]
@@ -333,6 +415,109 @@ function opToBSTDesc(op, nodes, activeId) {
     case 'bst_snap': return `Tree updated (${nodes.length} node${nodes.length !== 1 ? 's' : ''})`;
     default: return `Tree step`;
   }
+}
+
+/* ── AVL tree event builder ───────────────────────────────────────────────
+ * Reuses the raw bst_snap {id,val,leftId,rightId,isRoot} nodes, but never
+ * trusts a user "height" field or a rotateLeft/rotateRight method name —
+ * per-node height/balance factor are computed purely structurally from the
+ * left/right shape of the snapshot itself, and a rotation is recognized by
+ * diffing parent/child relationships between the previous and current
+ * snapshot (a child that becomes its former parent's parent = a rotation
+ * pivot), not by matching any particular source text. */
+function computeAVLNodes(nodes) {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const heightCache = new Map();
+
+  function height(id) {
+    if (id === null || id === undefined || id === -1) return 0;
+    if (heightCache.has(id)) return heightCache.get(id);
+    heightCache.set(id, 0); // cycle guard for malformed/buggy user trees
+    const n = byId.get(id);
+    if (!n) return 0;
+    const h = 1 + Math.max(height(n.leftId), height(n.rightId));
+    heightCache.set(id, h);
+    return h;
+  }
+
+  return nodes.map(n => {
+    const leftHeight = height(n.leftId);
+    const rightHeight = height(n.rightId);
+    const balanceFactor = leftHeight - rightHeight;
+    let balanceStatus = 'BALANCED';
+    if (balanceFactor > 1 || balanceFactor < -1) balanceStatus = 'UNBALANCED';
+    else if (balanceFactor === 1) balanceStatus = 'LEFT_HEAVY';
+    else if (balanceFactor === -1) balanceStatus = 'RIGHT_HEAVY';
+    return {
+      ...n,
+      height: 1 + Math.max(leftHeight, rightHeight),
+      leftHeight,
+      rightHeight,
+      balanceFactor,
+      balanceStatus,
+    };
+  });
+}
+
+/** Maps childId -> parentId from a raw {id,leftId,rightId} node list. */
+function buildParentMap(nodes) {
+  const parent = {};
+  for (const n of nodes) {
+    if (n.leftId !== null && n.leftId !== undefined && n.leftId !== -1) parent[n.leftId] = n.id;
+    if (n.rightId !== null && n.rightId !== undefined && n.rightId !== -1) parent[n.rightId] = n.id;
+  }
+  return parent;
+}
+
+/**
+ * Detects a rotation between two consecutive snapshots by finding a pair
+ * (parent a, child b) that inverted — b was a's child before, a is b's
+ * child now. That inversion is exactly what any rotation (regardless of
+ * what the user's code calls it) does to the tree shape. Direction is
+ * derived from which side b hung off of before the flip.
+ */
+function detectRotation(prevNodes, curNodes) {
+  if (!prevNodes.length || !curNodes.length) return null;
+  const prevParent = buildParentMap(prevNodes);
+  const curParent = buildParentMap(curNodes);
+  const prevById = new Map(prevNodes.map(n => [n.id, n]));
+
+  for (const key of Object.keys(prevParent)) {
+    const b = Number(key);
+    const a = prevParent[b];
+    if (curParent[a] === b) {
+      const prevA = prevById.get(a);
+      if (!prevA) continue;
+      if (prevA.leftId === b) return { type: 'ROTATE_RIGHT', pivot: a, newRoot: b };
+      if (prevA.rightId === b) return { type: 'ROTATE_LEFT', pivot: a, newRoot: b };
+    }
+  }
+  return null;
+}
+
+function buildAVLEvt(s, stepNo, rawNodes, ctx, userOutput) {
+  const nodes = computeAVLNodes(rawNodes);
+  const activeId = (s.activeId !== undefined && s.activeId !== null) ? s.activeId : -1;
+  const prevNodes = ctx.lastBSTSnap || [];
+  const rotation = detectRotation(prevNodes, rawNodes);
+
+  let evtType = 'avl_snap';
+  let desc = s.desc || `Tree updated (${nodes.length} node${nodes.length !== 1 ? 's' : ''})`;
+
+  if (rotation) {
+    evtType = rotation.type;
+    const pivotNode = nodes.find(n => n.id === rotation.pivot);
+    const pivotVal = pivotNode ? pivotNode.val : rotation.pivot;
+    desc = rotation.type === 'ROTATE_LEFT'
+      ? `Left rotation around node ${pivotVal} (right-heavy, restoring balance)`
+      : `Right rotation around node ${pivotVal} (left-heavy, restoring balance)`;
+  }
+
+  return base(stepNo, evtType, 'tree', desc, ctx, userOutput, {
+    treeState: nodes,
+    activeTreeNodeId: activeId,
+    rotation: rotation || null,
+  });
 }
 
 /* ── Java graph auto-detection from locals' toString() reprs ───────────── */
@@ -577,6 +762,15 @@ function base(stepNo, type, category, description, ctx, userOutput, overrides) {
     graphVisited: [...(ctx.lastGraphState?.visited || [])],
     graphFrontier: [...(ctx.lastGraphState?.frontier || [])],
     activeGraphNodeId: null,
+    // hash table panel defaults (overridden by hash events)
+    hashState: (ctx.lastHashState?.buckets || []).map(b => [...b]),
+    tableSize: ctx.lastHashState?.size || 0,
+    hashMode: ctx.lastHashState?.mode || 'chaining',
+    activeBucket: null,
+    activeKey: null,
+    found: null,
+    hashTombstones: [],
+    hashProbeSeq: [],
     // call-stack panel
     callStack: ctx.frames.map(f => ({ ...f, locals: { ...f.locals }, args: { ...f.args } })),
     currentFunc: topFunc(ctx),

@@ -16,6 +16,7 @@ import PaymentHistory from './pages/PaymentHistory';
 import SavedSnippets from './pages/SavedSnippets';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import Coins from './pages/Coins';
+import Reports from './pages/Reports';
 // import OverviewTab from './components/AdminDashboard/tabs/OverviewTab';
 
 /* Redirect "/" based on auth state */
@@ -58,6 +59,9 @@ export default function App() {
           } />
           <Route path="/coins" element={
             <ProtectedRoute><Coins /></ProtectedRoute>
+          } />
+          <Route path="/reports" element={
+            <ProtectedRoute><Reports /></ProtectedRoute>
           } />
 
           {/* admin only */}

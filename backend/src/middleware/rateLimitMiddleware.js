@@ -1,8 +1,8 @@
 /**
  * Per-user hourly rate limit for code execution, tiered by subscription plan.
  *
- *   premium  -> 100 requests / hour
- *   basic    ->  50 requests / hour
+ *   premium  -> unlimited (Pricing.jsx's "Unlimited executions" perk)
+ *   basic    ->  20 requests / hour
  *   free     ->  10 requests / hour
  *
  * In-memory counter keyed by userId — this process is a single Node
@@ -13,7 +13,7 @@
  * both simpler and fairer than a fixed wall-clock hour boundary.
  */
 
-const LIMITS = { premium: 100, basic:20, free: 10 };
+const LIMITS = { basic: 20, free: 10 }; // premium is exempt entirely, see below
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 // userId -> { count, resetAt }
@@ -32,7 +32,12 @@ function rateLimitExecution(req, res, next) {
   // debugging a report.
   if (req.user.role === 'admin') return next();
 
-  const plan  = req.user.subscriptionPlan || 'free';
+  const plan = req.user.subscriptionPlan || 'free';
+
+  // Premium's "Unlimited executions" pricing perk (Pricing.jsx) must
+  // actually be unlimited, not just a higher tiered number like basic's.
+  if (plan === 'premium') return next();
+
   const limit = planLimit(plan);
   const now   = Date.now();
 

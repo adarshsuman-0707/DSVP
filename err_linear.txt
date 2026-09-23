@@ -1,0 +1,62 @@
+DSVP_TRACE:{"op": "call", "func": "<module>", "depth": 0, "line": 1, "args": {}, "step": 1}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>"}, "changed": ["HashTable"], "step": 2}
+DSVP_TRACE:{"op": "hash_init", "size": 5, "mode": "linear", "buckets": [[], [], [], [], []], "activeBucket": null, "activeKey": null, "found": null, "val": null, "tombstones": [], "probeSeq": [], "step": 3}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 2, "source": "h.put(5, \"a\")", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{}"}, "changed": ["h"], "step": 4}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "5"}, "step": 5}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "5"}, "changed": ["k"], "step": 6}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "5"}, "step": 7}
+DSVP_TRACE:{"op": "hash_put", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [], [], [], []], "activeBucket": 0, "activeKey": "5", "found": null, "val": "a", "tombstones": [], "probeSeq": [{"index": 0, "occupied": false}], "step": 8}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 3, "source": "h.put(10, \"b\")", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{5: 'a'}"}, "changed": ["h"], "step": 9}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "10"}, "step": 10}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "10"}, "changed": ["k"], "step": 11}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "10"}, "step": 12}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [], [], [], []], "activeBucket": 0, "activeKey": "10", "found": null, "val": null, "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}], "step": 13}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "10"}, "step": 14}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "10"}, "changed": ["k"], "step": 15}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "10"}, "step": 16}
+DSVP_TRACE:{"op": "hash_put", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [], [], []], "activeBucket": 1, "activeKey": "10", "found": null, "val": "b", "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": false}], "step": 17}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 4, "source": "h.put(15, \"c\")", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{5: 'a', 10: 'b'}"}, "changed": ["h"], "step": 18}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "15"}, "step": 19}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "15"}, "changed": ["k"], "step": 20}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "15"}, "step": 21}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [], [], []], "activeBucket": 0, "activeKey": "15", "found": null, "val": null, "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}], "step": 22}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "15"}, "step": 23}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "15"}, "changed": ["k"], "step": 24}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "15"}, "step": 25}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [], [], []], "activeBucket": 1, "activeKey": "15", "found": null, "val": null, "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": true}], "step": 26}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "15"}, "step": 27}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "15"}, "changed": ["k"], "step": 28}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "15"}, "step": 29}
+DSVP_TRACE:{"op": "hash_put", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [{"key": "15", "val": "c"}], [], []], "activeBucket": 2, "activeKey": "15", "found": null, "val": "c", "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": true}, {"index": 2, "occupied": false}], "step": 30}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 5, "source": "print(h.get(10))", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{5: 'a', 10: 'b', 15: 'c'}"}, "changed": ["h"], "step": 31}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "10"}, "step": 32}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "10"}, "changed": ["k"], "step": 33}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "10"}, "step": 34}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [{"key": "15", "val": "c"}], [], []], "activeBucket": 0, "activeKey": "10", "found": null, "val": null, "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}], "step": 35}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "10"}, "step": 36}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "10"}, "changed": ["k"], "step": 37}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "10"}, "step": 38}
+DSVP_TRACE:{"op": "hash_get", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [{"key": "15", "val": "c"}], [], []], "activeBucket": 1, "activeKey": "10", "found": true, "val": "b", "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": true}], "step": 39}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 6, "source": "h.remove(10)", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{5: 'a', 10: 'b', 15: 'c'}"}, "changed": [], "step": 40}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "10"}, "step": 41}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "10"}, "changed": ["k"], "step": 42}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "10"}, "step": 43}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [{"key": "10", "val": "b"}], [{"key": "15", "val": "c"}], [], []], "activeBucket": 0, "activeKey": "10", "found": null, "val": null, "tombstones": [], "probeSeq": [{"index": 0, "occupied": true}], "step": 44}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "10"}, "step": 45}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "10"}, "changed": ["k"], "step": 46}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "10"}, "step": 47}
+DSVP_TRACE:{"op": "hash_remove", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [], [{"key": "15", "val": "c"}], [], []], "activeBucket": 1, "activeKey": "10", "found": true, "val": "b", "tombstones": [1], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": true}], "step": 48}
+DSVP_TRACE:{"op": "line", "func": "<module>", "depth": 0, "line": 7, "source": "print(h.get(15))", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{5: 'a', 15: 'c'}"}, "changed": ["h"], "step": 49}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "15"}, "step": 50}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "15"}, "changed": ["k"], "step": 51}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "15"}, "step": 52}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [], [{"key": "15", "val": "c"}], [], []], "activeBucket": 0, "activeKey": "15", "found": null, "val": null, "tombstones": [1], "probeSeq": [{"index": 0, "occupied": true}], "step": 53}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "15"}, "step": 54}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "15"}, "changed": ["k"], "step": 55}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "15"}, "step": 56}
+DSVP_TRACE:{"op": "hash_probe", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [], [{"key": "15", "val": "c"}], [], []], "activeBucket": 1, "activeKey": "15", "found": null, "val": null, "tombstones": [1], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": false}], "step": 57}
+DSVP_TRACE:{"op": "call", "func": "<lambda>", "depth": 1, "line": 1, "args": {"k": "15"}, "step": 58}
+DSVP_TRACE:{"op": "line", "func": "<lambda>", "depth": 1, "line": 1, "source": "h = HashTable(5, hash_fn=lambda k: k % 5, mode='linear')", "locals": {"k": "15"}, "changed": ["k"], "step": 59}
+DSVP_TRACE:{"op": "return", "func": "<lambda>", "depth": 1, "line": 1, "ret": "0", "locals": {"k": "15"}, "step": 60}
+DSVP_TRACE:{"op": "hash_get", "size": 5, "mode": "linear", "buckets": [[{"key": "5", "val": "a"}], [], [{"key": "15", "val": "c"}], [], []], "activeBucket": 2, "activeKey": "15", "found": true, "val": "c", "tombstones": [1], "probeSeq": [{"index": 0, "occupied": true}, {"index": 1, "occupied": false}, {"index": 2, "occupied": true}], "step": 61}
+DSVP_TRACE:{"op": "return", "func": "<module>", "depth": 0, "line": 7, "ret": "None", "locals": {"HashTable": "<function HashTable at 0x000002041ED91BD0>", "h": "{5: 'a', 15: 'c'}"}, "step": 62}

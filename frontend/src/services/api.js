@@ -136,4 +136,16 @@ export const getAdminAuditLogs  = (p = {})      => api.get('/admin/audit-logs', 
 // -------- Admin — Submissions --------
 export const getAdminSubmissions = (p = {})     => api.get('/admin/submissions', { params: p });
 
+// -------- Reports (user) --------
+export const getMyReportSummary   = ()        => api.get('/reports/summary');
+export const getMyReportData      = (params)  => api.get('/reports/data', { params });
+export const exportMyReport       = (params)  => api.get('/reports/export', { params, responseType: 'blob' });
+export const getMyReportHistory   = ()        => api.get('/reports/history');
+
+// -------- Reports (admin) --------
+export const getAdminReportSummary = ()       => api.get('/admin/reports/summary');
+export const getAdminReportData    = (params) => api.get('/admin/reports/data', { params });
+export const exportAdminReport     = (params) => api.get('/admin/reports/export', { params, responseType: 'blob' });
+export const getAdminReportHistory = ()       => api.get('/admin/reports/history');
+
 export default api;

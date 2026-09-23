@@ -30,6 +30,19 @@ export default function CodeEditor({
     editorRef.current = editor;
     monacoRef.current = monaco;
     applyDecorations(editor, monaco, currentLine, errorLine);
+    requestClipboardReadPermission();
+  }
+
+  /* Monaco's right-click "Paste" uses navigator.clipboard.readText(), which
+     browsers only allow once clipboard-read permission has been granted.
+     Requesting it proactively (best-effort — not all browsers support the
+     Permissions API for clipboard-read) lets the browser prompt the user
+     once so right-click paste can then work like Ctrl+V does. */
+  function requestClipboardReadPermission() {
+    if (!navigator.permissions?.query) return;
+    navigator.permissions
+      .query({ name: 'clipboard-read' })
+      .catch(() => {});
   }
 
   /* Re-apply decorations whenever line props change */

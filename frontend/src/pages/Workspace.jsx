@@ -6,8 +6,10 @@ import PlaybackBar from '../components/PlaybackBar/PlaybackBar';
 import { runCode, getModules } from '../services/api';
 import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory } from '../services/api';
 import { Modal, FormField, Input, Btn } from '../components/AdminDashboard/ui';
+import { useAuth } from '../context/AuthContext';
 
 const LANGUAGES = ['python', 'cpp', 'java', 'c', 'csharp'];
+const FILE_EXT_BY_LANG = { python: 'py', cpp: 'cpp', java: 'java', c: 'c', csharp: 'cs' };
 const LANG_LABELS = { python: 'Python', cpp: 'C++', java: 'Java', c: 'C', csharp: 'C#' };
 
 /* ── Workspace chrome theme (editor/panels/toolbar) ──────────────────────
@@ -400,6 +402,138 @@ print("Inorder traversal:", result)
 
         System.out.println("Found 60: " + search(root, 60));
         System.out.println("Found 99: " + search(root, 99));
+    }
+}
+`,
+  },
+
+  'avl-tree': {
+    python: `# AVL Tree — DSVP auto-detects your tree Node class and derives
+# height/balance-factor/rotations structurally from the runtime tree
+# shape, so any left/right field naming and any rotation strategy works.
+
+class Node:
+    def __init__(self, key):
+        self.key = key
+        self.left = None
+        self.right = None
+        self.height = 1
+
+def height(node):
+    return node.height if node else 0
+
+def balance(node):
+    return height(node.left) - height(node.right) if node else 0
+
+def rotate_right(y):
+    x = y.left
+    y.left = x.right
+    x.right = y
+    y.height = 1 + max(height(y.left), height(y.right))
+    x.height = 1 + max(height(x.left), height(x.right))
+    return x
+
+def rotate_left(x):
+    y = x.right
+    x.right = y.left
+    y.left = x
+    x.height = 1 + max(height(x.left), height(x.right))
+    y.height = 1 + max(height(y.left), height(y.right))
+    return y
+
+def insert(node, key):
+    if node is None:
+        return Node(key)
+    if key < node.key:
+        node.left = insert(node.left, key)
+    else:
+        node.right = insert(node.right, key)
+
+    node.height = 1 + max(height(node.left), height(node.right))
+    bf = balance(node)
+
+    if bf > 1 and key < node.left.key:
+        return rotate_right(node)
+    if bf < -1 and key > node.right.key:
+        return rotate_left(node)
+    if bf > 1 and key > node.left.key:
+        node.left = rotate_left(node.left)
+        return rotate_right(node)
+    if bf < -1 and key < node.right.key:
+        node.right = rotate_right(node.right)
+        return rotate_left(node)
+
+    return node
+
+root = None
+for v in [30, 20, 10, 25, 40, 50, 5]:
+    root = insert(root, v)
+
+print("AVL tree built — height:", height(root))
+`,
+    java: `public class Main {
+
+    static class Node {
+        int key;
+        int height;
+        Node left, right;
+        Node(int key) { this.key = key; this.height = 1; }
+    }
+
+    static int height(Node n) { return n == null ? 0 : n.height; }
+
+    static int balance(Node n) { return n == null ? 0 : height(n.left) - height(n.right); }
+
+    static Node rotateRight(Node y) {
+        Node x = y.left;
+        y.left = x.right;
+        x.right = y;
+        y.height = 1 + Math.max(height(y.left), height(y.right));
+        x.height = 1 + Math.max(height(x.left), height(x.right));
+        return x;
+    }
+
+    static Node rotateLeft(Node x) {
+        Node y = x.right;
+        x.right = y.left;
+        y.left = x;
+        x.height = 1 + Math.max(height(x.left), height(x.right));
+        y.height = 1 + Math.max(height(y.left), height(y.right));
+        return y;
+    }
+
+    static Node insert(Node node, int key) {
+        if (node == null) return new Node(key);
+        if (key < node.key) {
+            node.left = insert(node.left, key);
+        } else {
+            node.right = insert(node.right, key);
+        }
+
+        node.height = 1 + Math.max(height(node.left), height(node.right));
+        int bf = balance(node);
+
+        if (bf > 1 && key < node.left.key) return rotateRight(node);
+        if (bf < -1 && key > node.right.key) return rotateLeft(node);
+        if (bf > 1 && key > node.left.key) {
+            node.left = rotateLeft(node.left);
+            return rotateRight(node);
+        }
+        if (bf < -1 && key < node.right.key) {
+            node.right = rotateRight(node.right);
+            return rotateLeft(node);
+        }
+
+        return node;
+    }
+
+    public static void main(String[] args) {
+        Node root = null;
+        int[] values = {30, 20, 10, 25, 40, 50, 5};
+        for (int v : values) {
+            root = insert(root, v);
+        }
+        System.out.println("AVL tree built — height: " + height(root));
     }
 }
 `,
@@ -996,6 +1130,48 @@ class Main {
 }
 `,
   },
+
+  'hashing': {
+    python: `# Hash Table — separate chaining, DSVP auto-visualizes every put/get/remove
+# HashTable() gives you a traced container to store into — the hash
+# function (default: Python's hash() % size) and any collision handling
+# on top is entirely up to you.
+
+table = HashTable(7)
+
+table.put("apple", 10)
+table.put("banana", 20)
+table.put("grape", 30)   # may land in the same bucket as an earlier key —
+                          # DSVP shows it chained automatically
+
+print("apple ->", table.get("apple"))
+print("banana ->", table.get("banana"))
+
+table.remove("banana")
+print("banana ->", table.get("banana"))
+`,
+    java: `// Hash Table — DSVP auto-detects java.util.HashMap and visualizes every
+// put/get/remove as a separate-chaining table. Use it exactly like a
+// normal HashMap — no special API needed.
+import java.util.HashMap;
+
+public class Main {
+    public static void main(String[] args) {
+        HashMap<String, Integer> table = new HashMap<>();
+
+        table.put("apple", 10);
+        table.put("banana", 20);
+        table.put("grape", 30);
+
+        System.out.println("apple -> " + table.get("apple"));
+        System.out.println("banana -> " + table.get("banana"));
+
+        table.remove("banana");
+        System.out.println("banana -> " + table.get("banana"));
+    }
+}
+`,
+  },
 };
 
 // ── Module icons for dropdown ──
@@ -1021,6 +1197,8 @@ const MODULE_ICONS = {
 };
 
 export default function Workspace() {
+  const { user }                        = useAuth();
+  const canExportTraces                 = user?.SubscriptionPlan === 'premium' || user?.Role === 'admin';
   const [searchParams]                  = useSearchParams();
   const navigate                        = useNavigate();
   const location                        = useLocation();
@@ -1224,6 +1402,27 @@ export default function Workspace() {
   const displayStep  = meaningfulRank >= 0 ? meaningfulRank + 1 : (meaningfulOriginalIndices.length || stepIndex + 1);
   const displayTotal = meaningfulOriginalIndices.length || events.length;
 
+  /* Export code & trace — Premium plan perk (Pricing.jsx). Downloads the
+     current source file plus a JSON dump of the last run's visualization
+     events/output, so a learner can keep an offline record of what they
+     wrote and how it executed. */
+  function handleExportTraces() {
+    if (!canExportTraces) {
+      navigate('/pricing');
+      return;
+    }
+    const ext = FILE_EXT_BY_LANG[language] || 'txt';
+    downloadTextFile(`dsvp-${moduleSlug}.${ext}`, code, 'text/plain');
+
+    if (events.length > 0) {
+      const traceDump = {
+        moduleSlug, language, exportedAt: new Date().toISOString(),
+        userOutput, events,
+      };
+      downloadTextFile(`dsvp-${moduleSlug}-trace.json`, JSON.stringify(traceDump, null, 2), 'application/json');
+    }
+  }
+
   /* Save code handler */
   async function handleSaveCode(title) {
     try {
@@ -1403,6 +1602,27 @@ export default function Workspace() {
           💾 Save
         </button>
 
+        {/* Export code & traces — Premium plan perk; non-premium users get
+            routed to /pricing instead of a disabled/hidden button, matching
+            how locked modules behave in ModuleCatalog. */}
+        <button
+          onClick={handleExportTraces}
+          disabled={!code.trim()}
+          title={canExportTraces ? 'Download source code + trace JSON' : 'Premium feature — upgrade to export code & traces'}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            color: canExportTraces ? '#7c3aed' : '#8b949e',
+            border: canExportTraces ? '1px solid rgba(124,58,237,.4)' : '1px solid rgba(255,255,255,.1)',
+            background: canExportTraces ? 'rgba(124,58,237,.1)' : 'transparent',
+            cursor: !code.trim() ? 'not-allowed' : 'pointer',
+            opacity: !code.trim() ? 0.5 : 1,
+            transition: 'all 150ms',
+          }}
+        >
+          {canExportTraces ? '📤 Export' : '🔒 Export'}
+        </button>
+
         {/* Step counter */}
         {events.length > 0 && (
           <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 500 }}>
@@ -1553,6 +1773,15 @@ function PanelLabel({ children, theme = 'dark' }) {
       flexShrink: 0,
     }}>{children}</div>
   );
+}
+
+function downloadTextFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function SpinnerIcon() {

@@ -11,6 +11,8 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const userRoutes = require('./routes/userRoutes');
 const coinRoutes = require('./routes/coinRoutes');
+const reportRoutes = require('./routes/reportRoutes');
+const adminReportRoutes = require('./routes/adminReportRoutes');
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 
 const app = express();
@@ -38,6 +40,8 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/coins', coinRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/admin/reports', adminReportRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

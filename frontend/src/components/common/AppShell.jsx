@@ -14,6 +14,7 @@ const NAV = [
   { to: '/coins',      icon: '🪙', label: 'Coins',          tour: 'tour-coins' },
   { to: '/payments',   icon: '💳', label: 'Payments',       tour: 'tour-payments' },
   { to: '/profile',    icon: '👤', label: 'Profile',        tour: 'tour-profile' },
+  { to: '/reports',    icon: '📄', label: 'Reports',        tour: 'tour-reports' },
 ];
 
 /* guided-tour steps — filtered at runtime (e.g. coin pill only if unlocked) */
@@ -24,6 +25,7 @@ const TOUR_STEPS_BASE = [
   { id: 'tour-coins', title: 'DSVP Coins', desc: 'Buy your first plan to unlock coins. Earn more on renewals and redeem them for plan discounts or temporary module unlocks.' },
   { id: 'tour-payments', title: 'Payments', desc: 'Your full billing history — every order, its status and amount.' },
   { id: 'tour-profile', title: 'Profile', desc: 'Your account details, plan and stats live here.' },
+  { id: 'tour-reports', title: 'Reports', desc: 'Generate and export reports on your learning progress, code activity and billing history.' },
   { id: 'tour-search', title: 'Quick Search', desc: 'Press Ctrl+K anytime to jump straight to any page, from anywhere in the app.' },
   { id: 'tour-coinpill', title: 'Coin Balance', desc: 'Your live coin balance. Watch it pop up with a "+N" animation the moment you earn more coins.' },
   { id: 'tour-feedback', title: 'Feedback', desc: 'Found a bug or have an idea? Send feedback straight to the team from here.' },
@@ -53,6 +55,7 @@ const QUICK_NAV = [
   { to: '/coins',     icon: '🪙', label: 'DSVP Coins',      hint: 'Earn & redeem coins' },
   { to: '/payments',  icon: '💳', label: 'Payment History', hint: 'Billing & plan' },
   { to: '/profile',   icon: '👤', label: 'Profile',         hint: 'Stats & settings' },
+  { to: '/reports',   icon: '📄', label: 'Reports',         hint: 'Learning, activity & billing reports' },
 ];
 
 function QuickNav({ open, onClose, T }) {
@@ -696,6 +699,7 @@ function Breadcrumb({ T }) {
     '/coins':     { label: 'DSVP Coins',       icon: '🪙' },
     '/payments':  { label: 'Payment History',  icon: '💳' },
     '/profile':   { label: 'Profile',          icon: '👤' },
+    '/reports':   { label: 'Reports',          icon: '📄' },
     '/admin':     { label: 'Admin Dashboard',  icon: '⚙' },
   };
   const current = pathname.startsWith('/admin/users/')

@@ -91,6 +91,23 @@ public class JavaInstrumenter {
         boolean userHasOwnQueueClass = cu.getTypes().stream()
             .anyMatch(t -> t.getNameAsString().equals("Queue"));
 
+        // Same reasoning as userHasOwnStackClass above, for "HashMap"/"Hashtable".
+        boolean userHasOwnHashMapClass = cu.getTypes().stream()
+            .anyMatch(t -> t.getNameAsString().equals("HashMap") || t.getNameAsString().equals("Hashtable"));
+
+        // HashTable has no natural java.util type to hijack (unlike Stack/
+        // Queue/HashMap above) — the user must explicitly write
+        // `new HashTable<>(...)`. So instead of an AST-rewriting visitor, we
+        // just detect whether the RAW source text mentions "HashTable" at
+        // all (checked here, before any rewriting, mirroring the simplicity
+        // of the alreadyInstrumented check above) and whether the user has
+        // their own class/interface by that name (same guard pattern/timing
+        // as userHasOwnStackClass — must be captured before renameMainClassTo
+        // runs, for the same reasoning given there).
+        boolean userHasOwnHashTableClass = cu.getTypes().stream()
+            .anyMatch(t -> t.getNameAsString().equals("HashTable"));
+        boolean needsHashTableShim = !userHasOwnHashTableClass && source.contains("HashTable");
+
         // Ensure there's exactly one public-ish entry class named Main so
         // `java -cp . Main` always works, regardless of what the user named
         // their class.
@@ -100,6 +117,7 @@ public class JavaInstrumenter {
         boolean needsStackShim = false;
         boolean needsQueueShim = false;
         boolean needsArray2DShim = false;
+        boolean needsHashMapShim = false;
 
         if (!alreadyInstrumented) {
             // Hand-rolled array+top Stack classes — must run BEFORE
@@ -107,6 +125,15 @@ public class JavaInstrumenter {
             // statements (to make side-effecting return expressions
             // single-eval); if that ran first, the `return arr[idx];`
             // shape this pass looks for would already be gone.
+            // Hand-rolled hash table classes — structural detection (no user
+            // code changes required), the hash-table analogue of the
+            // Stack/Queue-field and LinkedList passes. Must run BEFORE
+            // StackFieldInstrumentVisitor/QueueFieldInstrumentVisitor so a
+            // direct-address `int[] table` field is claimed here first and
+            // never misread as a Stack/Queue backing array.
+            HashTableFieldInstrumentVisitor hashFieldPass = new HashTableFieldInstrumentVisitor();
+            hashFieldPass.visit(cu, null);
+
             StackFieldInstrumentVisitor stackFieldPass = new StackFieldInstrumentVisitor();
             stackFieldPass.visit(cu, null);
 
@@ -164,6 +191,14 @@ public class JavaInstrumenter {
             QueueInstrumentVisitor queuePass = new QueueInstrumentVisitor(userHasOwnQueueClass);
             queuePass.visit(cu, null);
             needsQueueShim = queuePass.didRewrite();
+
+            // HashMap auto-instrumentation — rewrites java.util.HashMap<K,V>
+            // (and Hashtable<K,V>) locals into DSVPHashMap<K,V> so
+            // put/get/remove emit DSVP_TRACE events. Skipped entirely when
+            // the user has their own class/interface named "HashMap"/"Hashtable".
+            HashingInstrumentVisitor hashingPass = new HashingInstrumentVisitor(userHasOwnHashMapClass);
+            hashingPass.visit(cu, null);
+            needsHashMapShim = hashingPass.didRewrite();
         }
 
         String printed = cu.toString();
@@ -195,6 +230,12 @@ public class JavaInstrumenter {
         }
         if (needsArray2DShim) {
             System.out.println(RuntimeShim.ARRAY2D_SOURCE);
+        }
+        if (needsHashMapShim) {
+            System.out.println(RuntimeShim.HASHMAP_SOURCE);
+        }
+        if (needsHashTableShim) {
+            System.out.println(RuntimeShim.HASHTABLE_SOURCE);
         }
         System.out.print(rest.toString());
     }

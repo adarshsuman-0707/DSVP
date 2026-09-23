@@ -5,7 +5,9 @@ import LinkedListVisualizer   from './LinkedListVisualizer';
 import StackVisualizer        from './StackVisualizer';
 import QueueVisualizer        from './QueueVisualizer';
 import BSTVisualizer          from './BSTVisualizer';
+import AVLVisualizer          from './AVLVisualizer';
 import GraphVisualizer        from './GraphVisualizer';
+import HashingVisualizer      from './HashingVisualizer';
 import CallStackPanel         from './CallStackPanel';
 import ExecutionHistoryPanel  from './ExecutionHistoryPanel';
 
@@ -68,6 +70,23 @@ function isBSTModule(slug) {
   return slug === 'bst';
 }
 
+/* ── helper: is this event an AVL tree event? ── */
+// AVL reuses the exact same treeState/activeTreeNodeId payload shape as
+// BST (see traceGeneratorService.js buildAVLEvt) — the normalizer already
+// computes height/balanceFactor/balanceStatus per node and detects
+// rotations structurally, so the frontend just needs its own event-type
+// Set + a moduleSlug check to route to AVLVisualizer instead of
+// BSTVisualizer, without knowing anything about Java/Python syntax.
+const AVL_EVENT_TYPES = new Set(['avl_snap', 'ROTATE_LEFT', 'ROTATE_RIGHT']);
+
+function isAVLEvent(event) {
+  return event && AVL_EVENT_TYPES.has(event.type);
+}
+
+function isAVLModule(slug) {
+  return slug === 'avl-tree';
+}
+
 /* ── helper: is this event a Graph event? ── */
 const GRAPH_EVENT_TYPES = new Set(['graph_init', 'graph_step', 'graph_build']);
 
@@ -77,6 +96,17 @@ function isGraphEvent(event) {
 
 function isGraphModule(slug) {
   return slug === 'graph';
+}
+
+/* ── helper: is this event a Hash Table event? ── */
+const HASH_EVENT_TYPES = new Set(['hash_init', 'hash_put', 'hash_get', 'hash_remove']);
+
+function isHashEvent(event) {
+  return event && HASH_EVENT_TYPES.has(event.type);
+}
+
+function isHashModule(slug) {
+  return slug === 'hashing';
 }
 
 /**
@@ -137,6 +167,16 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
   const lastBSTTypeRef     = useRef('bst_snap');
   const lastBSTDescRef     = useRef('');
   const lastBSTOutputRef   = useRef('');
+  // Dedicated sticky refs for AVL — separate from BST so switching modules
+  // doesn't bleed state across visualizers, and so rotation events (which
+  // carry no fresh treeState of their own between AVL_snap frames) don't
+  // get clobbered by a stray plain-BST session.
+  const lastAVLStateRef    = useRef([]);
+  const lastAVLActiveRef   = useRef(-1);
+  const lastAVLTypeRef     = useRef('avl_snap');
+  const lastAVLDescRef     = useRef('');
+  const lastAVLOutputRef   = useRef('');
+  const lastAVLRotationRef = useRef(null);
   // Dedicated sticky refs for 2D Array
   const lastGrid2DStateRef  = useRef([]);
   const lastGrid2DRowRef    = useRef(null);
@@ -154,6 +194,19 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
   const lastGraphTypeRef     = useRef('graph_init');
   const lastGraphDescRef     = useRef('');
   const lastGraphOutputRef   = useRef('');
+  // Dedicated sticky refs for Hashing — separate from everything else so
+  // switching modules doesn't bleed state across visualizers
+  const lastHashStateRef    = useRef([]);
+  const lastHashSizeRef     = useRef(0);
+  const lastHashModeRef     = useRef('chaining');
+  const lastHashBucketRef   = useRef(null);
+  const lastHashKeyRef      = useRef(null);
+  const lastHashFoundRef    = useRef(null);
+  const lastHashTypeRef     = useRef('hash_init');
+  const lastHashDescRef     = useRef('');
+  const lastHashOutputRef   = useRef('');
+  const lastHashTombstonesRef = useRef([]);
+  const lastHashProbeSeqRef   = useRef([]);
 
   /* Update sticky refs whenever the current event carries fresh data.
      Using useEffect to avoid mutating refs during render (React rule). */
@@ -227,6 +280,15 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
       lastBSTOutputRef.current  = event.userOutput       ?? '';
     }
 
+    if (isAVLEvent(event)) {
+      if (event.treeState) lastAVLStateRef.current  = event.treeState;
+      lastAVLActiveRef.current  = event.activeTreeNodeId ?? -1;
+      lastAVLTypeRef.current    = event.type             ?? 'avl_snap';
+      lastAVLDescRef.current    = isExecEvent(event.type) ? '' : (event.description ?? '');
+      lastAVLOutputRef.current  = event.userOutput       ?? '';
+      lastAVLRotationRef.current = event.rotation ?? null;
+    }
+
     if (event.graphNodes !== undefined) {
       lastGraphNodesRef.current    = event.graphNodes    ?? [];
       lastGraphEdgesRef.current    = event.graphEdges    ?? [];
@@ -247,6 +309,20 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
       lastGrid2DTypeRef.current   = event.type      ?? 'highlight';
       lastGrid2DDescRef.current   = isExecEvent(event.type) ? '' : (event.description ?? '');
       lastGrid2DOutputRef.current = event.userOutput ?? '';
+    }
+
+    if (isHashEvent(event)) {
+      if (event.hashState) lastHashStateRef.current = event.hashState;
+      lastHashSizeRef.current   = event.tableSize    ?? lastHashSizeRef.current;
+      lastHashModeRef.current   = event.hashMode     ?? lastHashModeRef.current;
+      lastHashBucketRef.current = event.activeBucket ?? null;
+      lastHashKeyRef.current    = event.activeKey    ?? null;
+      lastHashFoundRef.current  = event.found        ?? null;
+      lastHashTypeRef.current   = event.type         ?? 'hash_init';
+      lastHashDescRef.current   = isExecEvent(event.type) ? '' : (event.description ?? '');
+      lastHashOutputRef.current = event.userOutput   ?? '';
+      lastHashTombstonesRef.current = event.hashTombstones ?? [];
+      lastHashProbeSeqRef.current   = event.hashProbeSeq   ?? [];
     }
   }, [event, moduleSlug]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -330,17 +406,35 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
     return false;
   }, [moduleSlug, event, allEvents]);
 
+  const isAVLSession = useMemo(() => {
+    if (isAVLModule(moduleSlug)) return true;
+    if (allEvents.some(e => isAVLEvent(e))) return true;
+    if (isAVLEvent(event)) return true;
+    return false;
+  }, [moduleSlug, allEvents, event]);
+
   const isBSTSession = useMemo(() => {
+    // AVL takes priority — it carries the same generic treeState shape as
+    // plain BST, so without this exclusion the treeState-presence fallback
+    // below would misroute AVL traces into BSTVisualizer.
+    if (isAVLSession) return false;
     if (isBSTModule(moduleSlug)) return true;
     if (allEvents.some(e => isBSTEvent(e) || (e.treeState && e.treeState.length > 0))) return true;
     if (isBSTEvent(event)) return true;
     return false;
-  }, [moduleSlug, allEvents, event]);
+  }, [moduleSlug, allEvents, event, isAVLSession]);
 
   const isGraphSession = useMemo(() => {
     if (isGraphModule(moduleSlug)) return true;
     if (allEvents.some(e => isGraphEvent(e) || (e.graphNodes && e.graphNodes.length > 0))) return true;
     if (isGraphEvent(event)) return true;
+    return false;
+  }, [moduleSlug, allEvents, event]);
+
+  const isHashSession = useMemo(() => {
+    if (isHashModule(moduleSlug)) return true;
+    if (allEvents.some(e => isHashEvent(e) || (e.hashState && e.hashState.length > 0))) return true;
+    if (isHashEvent(event)) return true;
     return false;
   }, [moduleSlug, allEvents, event]);
 
@@ -353,6 +447,8 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
         <div style={{ flex: 1 }}>
           {isLLSession ? (
             <LinkedListVisualizer linkedListState={[]} isDoubly={isDoublySession} theme={theme} />
+          ) : isAVLSession ? (
+            <AVLVisualizer treeState={[]} theme={theme} />
           ) : isBSTSession ? (
             <BSTVisualizer treeState={[]} theme={theme} />
           ) : isGraphSession ? (
@@ -363,6 +459,8 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             <QueueVisualizer queueState={[]} theme={theme} />
           ) : isArray2DSession ? (
             <Grid2DVisualizer grid2dState={[]} theme={theme} />
+          ) : isHashSession ? (
+            <HashingVisualizer hashState={[]} theme={theme} />
           ) : (
             <NoEventState moduleSlug={moduleSlug} theme={theme} />
           )}
@@ -457,6 +555,18 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             isDoubly={isDoublySession}
             theme={theme}
           />
+        ) : isAVLSession ? (
+          <AVLVisualizer
+            treeState={lastAVLStateRef.current}
+            activeNodeId={lastAVLActiveRef.current}
+            type={lastAVLTypeRef.current}
+            description={lastAVLDescRef.current}
+            rotation={lastAVLRotationRef.current}
+            step={event.step       ?? 0}
+            totalSteps={totalSteps ?? 0}
+            userOutput={lastAVLOutputRef.current}
+            theme={theme}
+          />
         ) : isBSTSession ? (
           <BSTVisualizer
             treeState={lastBSTStateRef.current}
@@ -515,6 +625,23 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             totalSteps={totalSteps ?? 0}
             userOutput={lastGrid2DOutputRef.current}
             locals={event.locals   ?? null}
+            theme={theme}
+          />
+        ) : isHashSession ? (
+          <HashingVisualizer
+            hashState={lastHashStateRef.current}
+            tableSize={lastHashSizeRef.current}
+            hashMode={lastHashModeRef.current}
+            activeBucket={lastHashBucketRef.current}
+            activeKey={lastHashKeyRef.current}
+            found={lastHashFoundRef.current}
+            tombstones={lastHashTombstonesRef.current}
+            probeSeq={lastHashProbeSeqRef.current}
+            type={lastHashTypeRef.current}
+            description={lastHashDescRef.current}
+            step={event.step       ?? 0}
+            totalSteps={totalSteps ?? 0}
+            userOutput={lastHashOutputRef.current}
             theme={theme}
           />
         ) : (

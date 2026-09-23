@@ -302,8 +302,81 @@ final class RuntimeShim {
             public boolean lteChar(int i,int j){ emitSnap("compare",i,String.valueOf(j)); return ((char[])data)[i]<=((char[])data)[j]; }
             public boolean eqChar(int i,int j){ emitSnap("compare",i,String.valueOf(j)); return ((char[])data)[i]==((char[])data)[j]; }
             public boolean neqChar(int i,int j){ emitSnap("compare",i,String.valueOf(j)); return ((char[])data)[i]!=((char[])data)[j]; }
-            
+
             @Override public String toString(){ return snapStr(); }
+        }
+
+        // Reflective helper backing HashTableFieldInstrumentVisitor's structural
+        // (zero user-code-change) detection of hand-rolled hash table classes --
+        // both separate-chaining (Node[] table) and direct-address (int[]/
+        // Integer[]/Object[]/String[] table) shapes. Unlike DSVPHashMap/HashTable
+        // (which replace the user's storage entirely), this NEVER touches the
+        // user's field types or method bodies beyond appending a trace call --
+        // it walks whatever live object graph is already there via reflection.
+        // Always present (like DSVPArray) since detection is unconditional.
+        class DSVPHash {
+            private static String escapeJson(String s){
+                return s.replace("\\\\", "\\\\\\\\")
+                        .replace("\\"", "\\\\\\"")
+                        .replace("\\n", "\\\\n")
+                        .replace("\\r", "\\\\r")
+                        .replace("\\t", "\\\\t");
+            }
+            private static String jsonStringOrNull(Object o){
+                return o == null ? "null" : "\\"" + escapeJson(String.valueOf(o)) + "\\"";
+            }
+            private static Object getField(Object o, String name){
+                try {
+                    java.lang.reflect.Field f = o.getClass().getDeclaredField(name);
+                    f.setAccessible(true);
+                    return f.get(o);
+                } catch (Exception e) { return null; }
+            }
+
+            public static void emit(String op, Object tableArr, String nextField, String keyField, String valField,
+                                     int activeIdx, Object activeKey, String mode){
+                int n = java.lang.reflect.Array.getLength(tableArr);
+                StringBuilder bj = new StringBuilder("[");
+                boolean found = false;
+                Object foundVal = null;
+                for (int i = 0; i < n; i++) {
+                    Object slot = java.lang.reflect.Array.get(tableArr, i);
+                    bj.append("[");
+                    if (nextField != null) {
+                        Object node = slot;
+                        boolean first = true;
+                        while (node != null) {
+                            Object k = keyField != null ? getField(node, keyField) : null;
+                            Object v = valField != null ? getField(node, valField) : null;
+                            if (!first) bj.append(",");
+                            bj.append("{\\"key\\":").append(jsonStringOrNull(k))
+                              .append(",\\"val\\":").append(jsonStringOrNull(v)).append("}");
+                            first = false;
+                            if (i == activeIdx && java.util.Objects.equals(String.valueOf(k), String.valueOf(activeKey))) {
+                                found = true; foundVal = v;
+                            }
+                            node = getField(node, nextField);
+                        }
+                    } else if (slot != null) {
+                        bj.append("{\\"key\\":").append(jsonStringOrNull(i))
+                          .append(",\\"val\\":").append(jsonStringOrNull(slot)).append("}");
+                        if (i == activeIdx) { found = true; foundVal = slot; }
+                    }
+                    bj.append("]");
+                    if (i < n - 1) bj.append(",");
+                }
+                bj.append("]");
+                String foundStr = op.equals("hash_put") ? "null" : String.valueOf(found);
+                System.err.println("DSVP_TRACE:{\\"op\\":\\"" + op + "\\",\\"size\\":" + n
+                    + ",\\"mode\\":\\"" + mode + "\\""
+                    + ",\\"buckets\\":" + bj
+                    + ",\\"activeBucket\\":" + activeIdx
+                    + ",\\"activeKey\\":" + jsonStringOrNull(activeKey)
+                    + ",\\"found\\":" + foundStr
+                    + ",\\"val\\":" + jsonStringOrNull(foundVal)
+                    + "}");
+                System.err.flush();
+            }
         }
         """;
 
@@ -552,6 +625,489 @@ final class RuntimeShim {
             public int cols(){ return data.length > 0 ? data[0].length : 0; }
 
             @Override public String toString(){ return gridStr(); }
+        }
+        """;
+
+    // Only injected when HashingInstrumentVisitor actually rewrote a
+    // java.util.HashMap<K,V>/Hashtable<K,V> local — kept fully out of the
+    // generated source otherwise, same conditional-injection pattern as
+    // STACK_SOURCE. Real separate-chaining hash table (NOT a delegate to
+    // java.util.HashMap) so the visualized buckets reflect actual storage:
+    // a fixed-capacity array of ArrayList<Entry> buckets, index chosen via
+    // Math.floorMod(key.hashCode(), capacity) so negative hashCodes still
+    // land inside [0, capacity).
+    static final String HASHMAP_SOURCE = """
+        class DSVPHashMap<K,V> {
+            private static class Entry<K,V> {
+                K key; V val;
+                Entry(K k, V v){ key = k; val = v; }
+            }
+
+            private java.util.ArrayList<Entry<K,V>>[] buckets;
+            private int capacity;
+            private int count = 0;
+
+            @SuppressWarnings("unchecked")
+            DSVPHashMap(){
+                this.capacity = 16;
+                buckets = new java.util.ArrayList[capacity];
+                for (int i = 0; i < capacity; i++) buckets[i] = new java.util.ArrayList<>();
+                emit("hash_init", -1, null, null, null);
+            }
+
+            private int indexFor(Object key){
+                int h = (key == null) ? 0 : key.hashCode();
+                return Math.floorMod(h, capacity);
+            }
+
+            public V put(K key, V val){
+                int idx = indexFor(key);
+                for (Entry<K,V> e : buckets[idx]) {
+                    if (java.util.Objects.equals(e.key, key)) {
+                        V old = e.val;
+                        e.val = val;
+                        emit("hash_put", idx, key, val, null);
+                        return old;
+                    }
+                }
+                buckets[idx].add(new Entry<>(key, val));
+                count++;
+                emit("hash_put", idx, key, val, null);
+                return null;
+            }
+
+            public V get(Object key){
+                int idx = indexFor(key);
+                for (Entry<K,V> e : buckets[idx]) {
+                    if (java.util.Objects.equals(e.key, key)) {
+                        emit("hash_get", idx, key, e.val, true);
+                        return e.val;
+                    }
+                }
+                emit("hash_get", idx, key, null, false);
+                return null;
+            }
+
+            public V remove(Object key){
+                int idx = indexFor(key);
+                java.util.Iterator<Entry<K,V>> it = buckets[idx].iterator();
+                while (it.hasNext()) {
+                    Entry<K,V> e = it.next();
+                    if (java.util.Objects.equals(e.key, key)) {
+                        it.remove();
+                        count--;
+                        emit("hash_remove", idx, key, e.val, true);
+                        return e.val;
+                    }
+                }
+                emit("hash_remove", idx, key, null, false);
+                return null;
+            }
+
+            public boolean containsKey(Object key){
+                int idx = indexFor(key);
+                for (Entry<K,V> e : buckets[idx]) {
+                    if (java.util.Objects.equals(e.key, key)) return true;
+                }
+                return false;
+            }
+
+            public int size(){ return count; }
+            public boolean isEmpty(){ return count == 0; }
+
+            public java.util.Set<K> keySet(){
+                java.util.LinkedHashSet<K> out = new java.util.LinkedHashSet<>();
+                for (java.util.ArrayList<Entry<K,V>> bucket : buckets) {
+                    for (Entry<K,V> e : bucket) out.add(e.key);
+                }
+                return out;
+            }
+
+            private String escapeJson(String str) {
+                return str.replace("\\\\", "\\\\\\\\")
+                          .replace("\\"", "\\\\\\"")
+                          .replace("\\n", "\\\\n")
+                          .replace("\\r", "\\\\r")
+                          .replace("\\t", "\\\\t");
+            }
+
+            private String jsonStringOrNull(Object o){
+                return o == null ? "null" : "\\"" + escapeJson(String.valueOf(o)) + "\\"";
+            }
+
+            private String bucketsJson(){
+                StringBuilder s = new StringBuilder("[");
+                for (int i = 0; i < capacity; i++) {
+                    s.append("[");
+                    java.util.ArrayList<Entry<K,V>> bucket = buckets[i];
+                    for (int j = 0; j < bucket.size(); j++) {
+                        Entry<K,V> e = bucket.get(j);
+                        s.append("{\\"key\\":")
+                         .append(jsonStringOrNull(e.key))
+                         .append(",\\"val\\":")
+                         .append(jsonStringOrNull(e.val))
+                         .append("}");
+                        if (j < bucket.size() - 1) s.append(",");
+                    }
+                    s.append("]");
+                    if (i < capacity - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private void emit(String op, int activeBucket, Object key, Object val, Boolean found){
+                String foundStr = (found == null) ? "null" : String.valueOf(found);
+                System.err.println("DSVP_TRACE:{\\"op\\":\\"" + op + "\\",\\"size\\":" + capacity
+                    + ",\\"buckets\\":" + bucketsJson()
+                    + ",\\"activeBucket\\":" + activeBucket
+                    + ",\\"activeKey\\":" + jsonStringOrNull(key)
+                    + ",\\"found\\":" + foundStr
+                    + ",\\"val\\":" + jsonStringOrNull(val)
+                    + "}");
+                System.err.flush();
+            }
+
+            @Override public String toString(){
+                StringBuilder sb = new StringBuilder("{");
+                boolean first = true;
+                for (java.util.ArrayList<Entry<K,V>> bucket : buckets) {
+                    for (Entry<K,V> e : bucket) {
+                        if (!first) sb.append(", ");
+                        sb.append(e.key).append("=").append(e.val);
+                        first = false;
+                    }
+                }
+                return sb.append("}").toString();
+            }
+        }
+        """;
+
+    // Only injected when the user's RAW source literally mentions "HashTable"
+    // and they don't have their own class/interface by that name (checked in
+    // JavaInstrumenter.main() BEFORE parsing/rewriting — see needsHashTableShim).
+    // Unlike DSVPHashMap (which hijacks java.util.HashMap), HashTable has no
+    // natural java.util type to rewrite — probing mode is a DSVP-only concept
+    // — so the user must explicitly write `new HashTable<>(...)`. Supports
+    // BOTH separate chaining (mode CHAINING, identical behavior/JSON shape to
+    // DSVPHashMap) and open addressing (LINEAR/QUADRATIC/DOUBLE probing) in
+    // one class, mirroring python_instrumenter.py's single HashTable(...)
+    // factory so both languages offer the same surface.
+    static final String HASHTABLE_SOURCE = """
+        class HashTable<K,V> {
+            public enum Mode { CHAINING, LINEAR, QUADRATIC, DOUBLE }
+
+            private java.util.ArrayList<Object[]>[] buckets; // each Object[] = {key, val}
+            private boolean[] tombstone;
+            private int capacity;
+            private int count = 0;
+            private Mode mode;
+            private java.util.function.ToIntFunction<K> hashFn;
+            private java.util.function.ToIntFunction<K> hashFn2;
+
+            public HashTable(int size) { this(size, Mode.CHAINING, null, null); }
+            public HashTable(int size, Mode mode) { this(size, mode, null, null); }
+            public HashTable(int size, Mode mode, java.util.function.ToIntFunction<K> hashFn) { this(size, mode, hashFn, null); }
+
+            @SuppressWarnings("unchecked")
+            public HashTable(int size, Mode mode, java.util.function.ToIntFunction<K> hashFn, java.util.function.ToIntFunction<K> hashFn2) {
+                this.capacity = size;
+                this.mode = (mode == null) ? Mode.CHAINING : mode;
+                this.hashFn = (hashFn != null) ? hashFn : (k -> (k == null ? 0 : k.hashCode()));
+                final int cap = size;
+                this.hashFn2 = (hashFn2 != null) ? hashFn2
+                    : (k -> 1 + Math.floorMod((k == null ? 0 : k.hashCode()), Math.max(1, cap - 1)));
+                buckets = new java.util.ArrayList[size];
+                tombstone = new boolean[size];
+                for (int i = 0; i < size; i++) buckets[i] = new java.util.ArrayList<>();
+                emit("hash_init", -1, null, null, null, java.util.Collections.emptyList());
+            }
+
+            private int h1(K key) { return Math.floorMod(hashFn.applyAsInt(key), capacity); }
+
+            private int probeIndex(int h, K key, int i) {
+                switch (mode) {
+                    case LINEAR: return Math.floorMod(h + i, capacity);
+                    case QUADRATIC: return Math.floorMod(h + i * i, capacity);
+                    case DOUBLE: return Math.floorMod(h + i * hashFn2.applyAsInt(key), capacity);
+                    default: return h;
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            public V put(K key, V val){
+                if (mode == Mode.CHAINING) {
+                    int idx = Math.floorMod((key == null) ? 0 : key.hashCode(), capacity);
+                    for (Object[] e : buckets[idx]) {
+                        if (java.util.Objects.equals(e[0], key)) {
+                            Object old = e[1];
+                            e[1] = val;
+                            emit("hash_put", idx, key, val, null, java.util.Collections.emptyList());
+                            return (V) old;
+                        }
+                    }
+                    buckets[idx].add(new Object[]{key, val});
+                    count++;
+                    emit("hash_put", idx, key, val, null, java.util.Collections.emptyList());
+                    return null;
+                }
+
+                int h = h1(key);
+                java.util.ArrayList<int[]> probeSeq = new java.util.ArrayList<>();
+                int firstTombstone = -1;
+                for (int i = 0; i < capacity; i++) {
+                    int idx = probeIndex(h, key, i);
+                    boolean occupied = !buckets[idx].isEmpty();
+                    if (occupied) {
+                        Object[] e = buckets[idx].get(0);
+                        if (java.util.Objects.equals(e[0], key)) {
+                            Object old = e[1];
+                            e[1] = val;
+                            probeSeq.add(new int[]{idx, 1});
+                            emit("hash_put", idx, key, val, null, probeSeq);
+                            return (V) old;
+                        }
+                        probeSeq.add(new int[]{idx, 1});
+                        emitProbe(idx, key, probeSeq);
+                    } else if (tombstone[idx]) {
+                        if (firstTombstone == -1) firstTombstone = idx;
+                        probeSeq.add(new int[]{idx, 0});
+                        emitProbe(idx, key, probeSeq);
+                    } else {
+                        probeSeq.add(new int[]{idx, 0});
+                        int insertIdx = (firstTombstone != -1) ? firstTombstone : idx;
+                        buckets[insertIdx].add(new Object[]{key, val});
+                        tombstone[insertIdx] = false;
+                        count++;
+                        emit("hash_put", insertIdx, key, val, null, probeSeq);
+                        return null;
+                    }
+                }
+                throw new RuntimeException("Hash table full: no slot available for key " + key);
+            }
+
+            @SuppressWarnings("unchecked")
+            public V get(Object key){
+                if (mode == Mode.CHAINING) {
+                    int idx = Math.floorMod((key == null) ? 0 : key.hashCode(), capacity);
+                    for (Object[] e : buckets[idx]) {
+                        if (java.util.Objects.equals(e[0], key)) {
+                            emit("hash_get", idx, key, e[1], true, java.util.Collections.emptyList());
+                            return (V) e[1];
+                        }
+                    }
+                    emit("hash_get", idx, key, null, false, java.util.Collections.emptyList());
+                    return null;
+                }
+
+                int h = h1((K) key);
+                java.util.ArrayList<int[]> probeSeq = new java.util.ArrayList<>();
+                for (int i = 0; i < capacity; i++) {
+                    int idx = probeIndex(h, (K) key, i);
+                    boolean occupied = !buckets[idx].isEmpty();
+                    if (occupied) {
+                        Object[] e = buckets[idx].get(0);
+                        probeSeq.add(new int[]{idx, 1});
+                        if (java.util.Objects.equals(e[0], key)) {
+                            emit("hash_get", idx, key, e[1], true, probeSeq);
+                            return (V) e[1];
+                        }
+                        emitProbe(idx, key, probeSeq);
+                    } else if (tombstone[idx]) {
+                        probeSeq.add(new int[]{idx, 0});
+                        emitProbe(idx, key, probeSeq);
+                    } else {
+                        probeSeq.add(new int[]{idx, 0});
+                        emit("hash_get", idx, key, null, false, probeSeq);
+                        return null;
+                    }
+                }
+                emit("hash_get", -1, key, null, false, probeSeq);
+                return null;
+            }
+
+            @SuppressWarnings("unchecked")
+            public V remove(Object key){
+                if (mode == Mode.CHAINING) {
+                    int idx = Math.floorMod((key == null) ? 0 : key.hashCode(), capacity);
+                    java.util.Iterator<Object[]> it = buckets[idx].iterator();
+                    while (it.hasNext()) {
+                        Object[] e = it.next();
+                        if (java.util.Objects.equals(e[0], key)) {
+                            it.remove();
+                            count--;
+                            emit("hash_remove", idx, key, e[1], true, java.util.Collections.emptyList());
+                            return (V) e[1];
+                        }
+                    }
+                    emit("hash_remove", idx, key, null, false, java.util.Collections.emptyList());
+                    return null;
+                }
+
+                int h = h1((K) key);
+                java.util.ArrayList<int[]> probeSeq = new java.util.ArrayList<>();
+                for (int i = 0; i < capacity; i++) {
+                    int idx = probeIndex(h, (K) key, i);
+                    boolean occupied = !buckets[idx].isEmpty();
+                    if (occupied) {
+                        Object[] e = buckets[idx].get(0);
+                        probeSeq.add(new int[]{idx, 1});
+                        if (java.util.Objects.equals(e[0], key)) {
+                            Object oldVal = e[1];
+                            buckets[idx].clear();
+                            tombstone[idx] = true;
+                            count--;
+                            emit("hash_remove", idx, key, oldVal, true, probeSeq);
+                            return (V) oldVal;
+                        }
+                        emitProbe(idx, key, probeSeq);
+                    } else if (tombstone[idx]) {
+                        probeSeq.add(new int[]{idx, 0});
+                        emitProbe(idx, key, probeSeq);
+                    } else {
+                        probeSeq.add(new int[]{idx, 0});
+                        emit("hash_remove", idx, key, null, false, probeSeq);
+                        return null;
+                    }
+                }
+                emit("hash_remove", -1, key, null, false, probeSeq);
+                return null;
+            }
+
+            public boolean containsKey(Object key){
+                if (mode == Mode.CHAINING) {
+                    int idx = Math.floorMod((key == null) ? 0 : key.hashCode(), capacity);
+                    for (Object[] e : buckets[idx]) {
+                        if (java.util.Objects.equals(e[0], key)) return true;
+                    }
+                    return false;
+                }
+                int h = h1((K) key);
+                for (int i = 0; i < capacity; i++) {
+                    int idx = probeIndex(h, (K) key, i);
+                    boolean occupied = !buckets[idx].isEmpty();
+                    if (occupied) {
+                        if (java.util.Objects.equals(buckets[idx].get(0)[0], key)) return true;
+                    } else if (!tombstone[idx]) {
+                        return false;
+                    }
+                }
+                return false;
+            }
+
+            public int size(){ return count; }
+            public boolean isEmpty(){ return count == 0; }
+
+            @SuppressWarnings("unchecked")
+            public java.util.Set<K> keySet(){
+                java.util.LinkedHashSet<K> out = new java.util.LinkedHashSet<>();
+                for (java.util.ArrayList<Object[]> bucket : buckets) {
+                    for (Object[] e : bucket) out.add((K) e[0]);
+                }
+                return out;
+            }
+
+            private String escapeJson(String str) {
+                return str.replace("\\\\", "\\\\\\\\")
+                          .replace("\\"", "\\\\\\"")
+                          .replace("\\n", "\\\\n")
+                          .replace("\\r", "\\\\r")
+                          .replace("\\t", "\\\\t");
+            }
+
+            private String jsonStringOrNull(Object o){
+                return o == null ? "null" : "\\"" + escapeJson(String.valueOf(o)) + "\\"";
+            }
+
+            private String bucketsJson(){
+                StringBuilder s = new StringBuilder("[");
+                for (int i = 0; i < capacity; i++) {
+                    s.append("[");
+                    java.util.ArrayList<Object[]> bucket = buckets[i];
+                    for (int j = 0; j < bucket.size(); j++) {
+                        Object[] e = bucket.get(j);
+                        s.append("{\\"key\\":")
+                         .append(jsonStringOrNull(e[0]))
+                         .append(",\\"val\\":")
+                         .append(jsonStringOrNull(e[1]))
+                         .append("}");
+                        if (j < bucket.size() - 1) s.append(",");
+                    }
+                    s.append("]");
+                    if (i < capacity - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private String tombstonesJson(){
+                StringBuilder s = new StringBuilder("[");
+                boolean first = true;
+                for (int i = 0; i < capacity; i++) {
+                    if (tombstone[i]) {
+                        if (!first) s.append(",");
+                        s.append(i);
+                        first = false;
+                    }
+                }
+                return s.append("]").toString();
+            }
+
+            private String probeSeqJson(java.util.List<int[]> probeSeq){
+                StringBuilder s = new StringBuilder("[");
+                for (int i = 0; i < probeSeq.size(); i++) {
+                    int[] p = probeSeq.get(i);
+                    s.append("{\\"index\\":").append(p[0])
+                     .append(",\\"occupied\\":").append(p[1] == 1)
+                     .append("}");
+                    if (i < probeSeq.size() - 1) s.append(",");
+                }
+                return s.append("]").toString();
+            }
+
+            private void emitProbe(int idx, Object key, java.util.List<int[]> probeSeq){
+                if (mode == Mode.CHAINING) return;
+                System.err.println("DSVP_TRACE:{\\"op\\":\\"hash_probe\\",\\"size\\":" + capacity
+                    + ",\\"mode\\":\\"" + mode.name().toLowerCase() + "\\""
+                    + ",\\"buckets\\":" + bucketsJson()
+                    + ",\\"activeBucket\\":" + idx
+                    + ",\\"activeKey\\":" + jsonStringOrNull(key)
+                    + ",\\"found\\":null"
+                    + ",\\"val\\":null"
+                    + ",\\"tombstones\\":" + tombstonesJson()
+                    + ",\\"probeSeq\\":" + probeSeqJson(probeSeq)
+                    + "}");
+                System.err.flush();
+            }
+
+            private void emit(String op, int activeBucket, Object key, Object val, Boolean found, java.util.List<int[]> probeSeq){
+                String foundStr = (found == null) ? "null" : String.valueOf(found);
+                String modeStr = mode.name().toLowerCase();
+                String tombstonesStr = (mode == Mode.CHAINING) ? "[]" : tombstonesJson();
+                String probeSeqStr = (mode == Mode.CHAINING) ? "[]" : probeSeqJson(probeSeq);
+                System.err.println("DSVP_TRACE:{\\"op\\":\\"" + op + "\\",\\"size\\":" + capacity
+                    + ",\\"mode\\":\\"" + modeStr + "\\""
+                    + ",\\"buckets\\":" + bucketsJson()
+                    + ",\\"activeBucket\\":" + activeBucket
+                    + ",\\"activeKey\\":" + jsonStringOrNull(key)
+                    + ",\\"found\\":" + foundStr
+                    + ",\\"val\\":" + jsonStringOrNull(val)
+                    + ",\\"tombstones\\":" + tombstonesStr
+                    + ",\\"probeSeq\\":" + probeSeqStr
+                    + "}");
+                System.err.flush();
+            }
+
+            @Override public String toString(){
+                StringBuilder sb = new StringBuilder("{");
+                boolean first = true;
+                for (java.util.ArrayList<Object[]> bucket : buckets) {
+                    for (Object[] e : bucket) {
+                        if (!first) sb.append(", ");
+                        sb.append(e[0]).append("=").append(e[1]);
+                        first = false;
+                    }
+                }
+                return sb.append("}").toString();
+            }
         }
         """;
 }
