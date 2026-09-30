@@ -3,7 +3,7 @@ import AppShell from '../components/common/AppShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNavigate } from 'react-router-dom';
-import { updateProfile, changePassword, getCodeHistory, loadCodeHistory } from '../services/api';
+import { updateProfile, changePassword, getCodeHistory, getActivityDays, loadCodeHistory, getMe } from '../services/api';
 import {
   Card, RichStat, ActivityHeatmap, LanguageDonut, TopicProgress,
   Achievements, DailyGoal, SummaryStrip, StreakCalendar, activityYears, StreakRiskAlert,
@@ -200,11 +200,14 @@ function timeAgo(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function dateKey(d) { return new Date(d).toISOString().slice(0, 10); }
+function dateKey(d) {
+  const x = new Date(d); // local calendar day, not UTC
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
 
 /* compute current + longest streak from real CreatedAt dates */
-function computeStreaks(history) {
-  const daySet = new Set(history.filter(h => h.CreatedAt).map(h => dateKey(h.CreatedAt)));
+function computeStreaks(activity) {
+  const daySet = new Set(activity.filter(h => h.CreatedAt).map(h => dateKey(h.CreatedAt)));
   if (daySet.size === 0) return { current: 0, longest: 0 };
 
   const days = [...daySet].sort();
@@ -237,33 +240,46 @@ export default function Profile() {
 
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [runDays, setRunDays] = useState([]);   // code-run timestamps, [{ CreatedAt }]
   const [heatmapYear, setHeatmapYear] = useState(new Date().getFullYear());
+
+  // Login payload has no CreatedAt; backfill it (for "Member since") from /me.
+  useEffect(() => {
+    if (user?.CreatedAt) return;
+    getMe().then(res => {
+      if (res.data?.user?.CreatedAt) updateUser({ CreatedAt: res.data.user.CreatedAt });
+    }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     getCodeHistory({ page: 1, pageSize: 100 })
       .then(res => setHistory(res.data.data || []))
       .catch(() => setHistory([]))
       .finally(() => setHistoryLoading(false));
+    getActivityDays().then(res => setRunDays(res.data?.days || [])).catch(() => setRunDays([]));
   }, []);
 
+  // Practice activity = saved snippets + code runs (streak, heatmap, calendar).
+  const activity = useMemo(() => [...history, ...runDays], [history, runDays]);
+
   const stats = useMemo(() => {
-    if (history.length === 0) {
+    if (history.length === 0 && runDays.length === 0) {
       return { total: 0, modules: 0, language: '—', lastActive: null, currentStreak: 0, longestStreak: 0, languageCount: 0, todayCount: 0 };
     }
     const modules = new Set(history.map(h => h.ModuleSlug).filter(Boolean));
     const langCounts = {};
     history.forEach(h => { if (h.Language) langCounts[h.Language] = (langCounts[h.Language] || 0) + 1; });
     const topLang = Object.entries(langCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
-    const lastActive = history.map(h => h.CreatedAt).filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0];
-    const { current, longest } = computeStreaks(history);
+    const lastActive = activity.map(h => h.CreatedAt).filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0];
+    const { current, longest } = computeStreaks(activity);
     const todayKey = dateKey(new Date());
-    const todayCount = history.filter(h => h.CreatedAt && dateKey(h.CreatedAt) === todayKey).length;
+    const todayCount = activity.filter(h => h.CreatedAt && dateKey(h.CreatedAt) === todayKey).length;
     return {
       total: history.length, modules: modules.size, language: topLang, lastActive,
       currentStreak: current, longestStreak: longest, languageCount: Object.keys(langCounts).length,
       todayCount,
     };
-  }, [history]);
+  }, [history, activity, runDays]);
 
   const recent = useMemo(() => history.slice(0, 5), [history]);
 
@@ -395,7 +411,7 @@ export default function Profile() {
                   <Badge color="#fff" bg="rgba(255,255,255,.16)" border="rgba(255,255,255,.35)">Free Plan</Badge>
                 )}
                 <Badge color="#fff" bg="rgba(255,255,255,.16)" border="rgba(255,255,255,.35)">
-                  Member since {user?.CreatedAt ? new Date(user.CreatedAt).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '—'}
+                  Member since {user?.CreatedAt ? new Date(user.CreatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                 </Badge>
               </div>
             </div>
@@ -488,7 +504,7 @@ export default function Profile() {
 
             <Card
               T={T} delay={60} title="Contribution Activity"
-              subtitle={`Snippets saved in ${heatmapYear}.`} icon="📈"
+              subtitle={`Snippets saved and code runs in ${heatmapYear}.`} icon="📈"
               right={!historyLoading && (
                 <select
                   value={heatmapYear}
@@ -499,14 +515,14 @@ export default function Profile() {
                     outline: 'none', cursor: 'pointer', fontFamily: 'inherit',
                   }}
                 >
-                  {activityYears(history).map(y => <option key={y} value={y}>{y}</option>)}
+                  {activityYears(activity).map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               )}
             >
               {historyLoading ? (
                 <p style={{ fontSize: 13, color: T.textMuted, margin: 0 }}>Loading…</p>
               ) : (
-                <ActivityHeatmap history={history} T={T} year={heatmapYear} />
+                <ActivityHeatmap history={activity} T={T} year={heatmapYear} />
               )}
             </Card>
 
@@ -573,7 +589,7 @@ export default function Profile() {
             <div id="streak-calendar-card">
               <Card T={T} delay={50} title="Streak Calendar" subtitle="Your practice activity this week." icon="🗓️">
                 {historyLoading ? <p style={{ fontSize: 13, color: T.textMuted, margin: 0 }}>Loading…</p> : (
-                  <StreakCalendar history={history} currentStreak={stats.currentStreak} longestStreak={stats.longestStreak} T={T} onAction={() => navigate('/dashboard')} />
+                  <StreakCalendar history={activity} currentStreak={stats.currentStreak} longestStreak={stats.longestStreak} T={T} onAction={() => navigate('/dashboard')} />
                 )}
               </Card>
             </div>

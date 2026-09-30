@@ -8,6 +8,7 @@ import {
   Pagination, ErrorBanner, EmptyState, Spinner, Select,
   useToasts, ToastStack, fmtDateTime,
 } from '../components/AdminDashboard/ui';
+import { useTheme } from '../context/ThemeContext';
 
 const REASON_META = {
   login:               { icon: '📅', label: 'Daily Login' },
@@ -58,7 +59,7 @@ export default function Coins() {
   const [modules, setModules] = useState([]);
   const [selectedModule, setSelectedModule] = useState('');
   const [redeeming, setRedeeming] = useState(false);
-
+  const T=useTheme();
   const loadWallet = useCallback(() => {
     setLoading(true); setError('');
     getCoinWallet()
@@ -66,7 +67,7 @@ export default function Coins() {
       .catch(() => setError('Failed to load your coin wallet.'))
       .finally(() => setLoading(false));
   }, []);
-
+console.table(wallet)
   const loadTx = useCallback(() => {
     setTxLoading(true);
     getCoinTransactions({ page: txPage, pageSize: txPageSize })
@@ -158,7 +159,7 @@ export default function Coins() {
 
             {/* How to earn */}
             <Card style={{ padding: 20, marginBottom: 24 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#1e293b', marginBottom: 14 }}>How to earn coins</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color:T.text, marginBottom: 14 }}>How to earn coins</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 12 }}>
                 {EARN_RULES.map(r => (
                   <div key={r.label} style={{
@@ -181,7 +182,7 @@ export default function Coins() {
             {/* Redeem: module unlock */}
             {!locked && (
               <Card style={{ padding: 20, marginBottom: 24 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>🔓 Unlock a module for 7 days</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color:T.text, marginBottom: 4 }}>🔓 Unlock a module for 7 days</div>
                 <p style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>
                   Spend {wallet.moduleUnlockCost} coins to try any Basic/Premium module for a week, without upgrading your plan.
                 </p>
@@ -210,7 +211,7 @@ export default function Coins() {
 
             {/* Transaction history */}
             <Card>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', fontSize: 14, fontWeight: 700, color: '#1e293b' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', fontSize: 14, fontWeight: 700, color: T.text }}>
                 Coin History
               </div>
               <div style={{ overflowX: 'auto' }}>
@@ -227,12 +228,12 @@ export default function Coins() {
                       return (
                         <TRow key={t.TransactionId}>
                           <TD>{meta.icon} {meta.label}</TD>
-                          <TD style={{ color: '#64748b' }}>{t.Description || '—'}</TD>
+                          <TD style={{ color: T.text }}>{t.Description || '—'}</TD>
                           <TD style={{ fontWeight: 700, color: t.Amount >= 0 ? '#4CAF50' : '#dc2626' }}>
                             {t.Amount >= 0 ? '+' : ''}{t.Amount}
                           </TD>
-                          <TD style={{ color: '#94a3b8' }}>{t.BalanceAfter}</TD>
-                          <TD style={{ color: '#94a3b8', whiteSpace: 'nowrap' }}>{fmtDateTime(t.CreatedAt)}</TD>
+                          <TD style={{ color: T.text }}>{t.BalanceAfter}</TD>
+                          <TD style={{ color: T.textSecondary, whiteSpace: 'nowrap' }}>{fmtDateTime(t.CreatedAt)}</TD>
                         </TRow>
                       );
                     })}

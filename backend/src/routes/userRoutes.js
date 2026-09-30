@@ -17,6 +17,21 @@ router.get('/me', verifyToken, async (req, res, next) => {
   }
 });
 
+// GET /api/users/activity-days - timestamps of the user's code runs (last ~2 years),
+// used with saved snippets to build the streak / contribution views.
+router.get('/activity-days', verifyToken, async (req, res, next) => {
+  try {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('UserId', sql.Int, req.user.userId)
+      .query(`SELECT CreatedAt FROM dbo.ExecutionTraces
+              WHERE UserId = @UserId AND CreatedAt >= DATEADD(year, -2, SYSUTCDATETIME())`);
+    res.json({ days: r.recordset.map(x => ({ CreatedAt: x.CreatedAt })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PATCH /api/users/profile - Update display name
 router.patch('/profile', verifyToken, async (req, res, next) => {
   try {

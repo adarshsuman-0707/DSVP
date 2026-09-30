@@ -4,6 +4,7 @@ import Grid2DVisualizer       from './Grid2DVisualizer';
 import LinkedListVisualizer   from './LinkedListVisualizer';
 import StackVisualizer        from './StackVisualizer';
 import QueueVisualizer        from './QueueVisualizer';
+import StackQueueInfoPanel   from './StackQueueInfoPanel';
 import BSTVisualizer          from './BSTVisualizer';
 import AVLVisualizer          from './AVLVisualizer';
 import GraphVisualizer        from './GraphVisualizer';
@@ -116,10 +117,11 @@ function isHashModule(slug) {
  * and shows CallStackPanel + ExecutionHistoryPanel (right panel).
  * Both horizontal (left/right) and vertical (call stack/history) resizing!
  */
-export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0, theme = 'dark' }) {
+export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0, theme = 'dark', runError = '' }) {
   const palette = CANVAS_THEME[theme] || CANVAS_THEME.dark;
   const [rightPanelWidth, setRightPanelWidth] = useState(320);
   const [callStackHeight, setCallStackHeight] = useState(300);
+  const [showSqHistory, setShowSqHistory] = useState(false);
   const [isResizingH, setIsResizingH] = useState(false);
   const [isResizingV, setIsResizingV] = useState(false);
   const containerRef = useRef(null);
@@ -127,15 +129,10 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
 
   /**
    * FIX: Sticky state refs — line/call/return trace events carry no
-   * linkedListState / arrayState. Without these refs the visualizer would
+   * arrayState. Without these refs the visualizer would
    * receive an empty [] every time a trace event fires → blank/flicker.
    * We remember the last non-empty state and keep showing it.
    */
-  const lastLLStateRef    = useRef([]);
-  const lastLLActivRef    = useRef(-1);
-  const lastLLTypeRef     = useRef('ll_snap');
-  const lastLLDescRef     = useRef('');
-  const lastLLOutputRef   = useRef('');
   const lastArrStateRef   = useRef([]);
   const lastArrActiveRef  = useRef(null);
   const lastArrSecondRef  = useRef(null);
@@ -213,13 +210,6 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
   useEffect(() => {
     if (!event) return;
 
-    if (isLLEvent(event)) {
-      if (event.linkedListState) lastLLStateRef.current  = event.linkedListState;
-      lastLLActivRef.current  = event.activeNodeId  ?? -1;
-      lastLLTypeRef.current   = event.type          ?? 'll_snap';
-      lastLLDescRef.current   = isExecEvent(event.type) ? '' : (event.description ?? '');
-      lastLLOutputRef.current = event.userOutput    ?? '';
-    }
 
     // arrayState is on every event (carries last snap) — update all that need it
     if (event.arrayState !== undefined) {
@@ -385,6 +375,30 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
     return false;
   }, [moduleSlug, event, allEvents]);
 
+  /* Linked-list view model, derived straight from the CURRENT event.
+     Every linked-list event already carries the full snapshot (+ pointer map),
+     so there is nothing to "remember" between steps — the old sticky refs were
+     written in an effect AFTER render, which made the visualizer lag one step
+     behind the editor highlight and made Previous unreliable. Deriving it here
+     keeps Next / Previous / scrubbing deterministic: state(step) is a pure
+     function of event[step]. */
+  const llView = useMemo(() => {
+    if (!isLLSession || !event) return null;
+    const exec = isExecEvent(event.type);
+    const prev = currentStep >= 2 ? allEvents[currentStep - 2] : null;
+    return {
+      state:       event.linkedListState ?? [],
+      activeId:    exec ? -1 : (event.activeNodeId ?? -1),
+      type:        exec ? 'll_snap' : (event.type ?? 'll_snap'),
+      description: exec ? '' : (event.description ?? ''),
+      kind:        exec ? null : (event.llKind ?? null),
+      ptrs:        event.llPtrs ?? null,
+      ring:        event.llRing ?? null,
+      line:        event.currentLine ?? null,
+      prevEvent:   prev ? { linkedListState: prev.linkedListState ?? [], ptrs: prev.llPtrs ?? null, ring: prev.llRing ?? null } : null,
+    };
+  }, [isLLSession, event, allEvents, currentStep]);
+
   const isStackSession = useMemo(() => {
     if (isStackModule(moduleSlug)) return true;
     if (event?.type?.startsWith('stack_') || Boolean(event?.stackState)) return true;
@@ -405,6 +419,19 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
     if (allEvents.some(e => isArray2DEvent(e) || (e.grid2dState && e.grid2dState.length > 0))) return true;
     return false;
   }, [moduleSlug, event, allEvents]);
+
+  // Deterministic 2D view: the most recent 2D access at or before the current
+  // step, derived purely from (allEvents, currentStep). Unlike the sticky refs
+  // this is correct on the very first render of a step, survives Previous /
+  // Reset, and keeps the active cell highlighted across interleaved 'line' events.
+  const grid2dView = useMemo(() => {
+    if (!isArray2DSession) return null;
+    const upto = Math.min(currentStep, allEvents.length);
+    for (let i = upto - 1; i >= 0; i--) {
+      if (isArray2DEvent(allEvents[i])) return allEvents[i];
+    }
+    return isArray2DEvent(event) ? event : null;
+  }, [isArray2DSession, allEvents, currentStep, event]);
 
   const isAVLSession = useMemo(() => {
     if (isAVLModule(moduleSlug)) return true;
@@ -545,14 +572,22 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         {isLLSession ? (
           <LinkedListVisualizer
-            linkedListState={lastLLStateRef.current}
-            activeNodeId={lastLLActivRef.current}
-            type={lastLLTypeRef.current}
-            description={lastLLDescRef.current}
+            linkedListState={llView.state}
+            activeNodeId={llView.activeId}
+            type={llView.type}
+            description={llView.description}
+            kind={llView.kind}
+            ptrs={llView.ptrs}
+            ring={llView.ring}
+            prevEvent={llView.prevEvent}
+            moduleSlug={moduleSlug}
+            currentLine={llView.line}
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
-            userOutput={lastLLOutputRef.current}
+            userOutput={event.userOutput ?? ''}
             isDoubly={isDoublySession}
+            runError={runError}
+            isLastStep={currentStep >= allEvents.length}
             theme={theme}
           />
         ) : isAVLSession ? (
@@ -593,38 +628,68 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             theme={theme}
           />
         ) : isStackSession ? (
-          <StackVisualizer
-            stackState={lastStackStateRef.current}
-            activeIndex={lastStackActiveRef.current}
-            type={lastStackTypeRef.current}
-            description={lastStackDescRef.current}
-            step={event.step       ?? 0}
-            totalSteps={totalSteps ?? 0}
-            userOutput={lastStackOutputRef.current}
-            theme={theme}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 10px', flexShrink: 0 }}>
+              <button type="button" onClick={() => setShowSqHistory(v => !v)} aria-pressed={showSqHistory}
+                style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 6,
+                  border: `1px solid ${palette.border}`, background: showSqHistory ? (theme === 'light' ? 'rgba(79,70,229,.12)' : 'rgba(99,102,241,.25)') : palette.panelBg, color: palette.text }}>
+                📜 Execution History {showSqHistory ? '▲' : '▼'}
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <StackVisualizer
+              stackState={lastStackStateRef.current}
+              activeIndex={lastStackActiveRef.current}
+              type={lastStackTypeRef.current}
+              description={lastStackDescRef.current}
+              step={event.step       ?? 0}
+              totalSteps={totalSteps ?? 0}
+              userOutput={lastStackOutputRef.current}
+              theme={theme}
+            />
+            </div>
+            <StackQueueInfoPanel showHistory={showSqHistory} allEvents={allEvents} event={event} theme={theme} />
+          </div>
         ) : isQueueSession ? (
-          <QueueVisualizer
-            queueState={lastQueueStateRef.current}
-            activeIndex={lastQueueActiveRef.current}
-            type={lastQueueTypeRef.current}
-            description={lastQueueDescRef.current}
-            step={event.step       ?? 0}
-            totalSteps={totalSteps ?? 0}
-            userOutput={lastQueueOutputRef.current}
-            theme={theme}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 10px', flexShrink: 0 }}>
+              <button type="button" onClick={() => setShowSqHistory(v => !v)} aria-pressed={showSqHistory}
+                style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 6,
+                  border: `1px solid ${palette.border}`, background: showSqHistory ? (theme === 'light' ? 'rgba(79,70,229,.12)' : 'rgba(99,102,241,.25)') : palette.panelBg, color: palette.text }}>
+                📜 Execution History {showSqHistory ? '▲' : '▼'}
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <QueueVisualizer
+              queueState={lastQueueStateRef.current}
+              activeIndex={lastQueueActiveRef.current}
+              type={lastQueueTypeRef.current}
+              description={lastQueueDescRef.current}
+              step={event.step       ?? 0}
+              totalSteps={totalSteps ?? 0}
+              userOutput={lastQueueOutputRef.current}
+              theme={theme}
+            />
+            </div>
+            <StackQueueInfoPanel showHistory={showSqHistory} allEvents={allEvents} event={event} theme={theme} />
+          </div>
         ) : isArray2DSession ? (
           <Grid2DVisualizer
-            grid2dState={lastGrid2DStateRef.current}
-            activeRow={lastGrid2DRowRef.current}
-            activeCol={lastGrid2DColRef.current}
-            type={lastGrid2DTypeRef.current}
-            description={lastGrid2DDescRef.current}
+            grid2dState={grid2dView?.grid2dState ?? event.grid2dState ?? lastGrid2DStateRef.current}
+            activeRow={grid2dView?.activeRow ?? null}
+            activeCol={grid2dView?.activeCol ?? null}
+            type={grid2dView?.type ?? 'highlight'}
+            description={grid2dView && !isExecEvent(grid2dView.type) ? (grid2dView.description ?? '') : ''}
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
-            userOutput={lastGrid2DOutputRef.current}
-            locals={event.locals   ?? null}
+            userOutput={event.userOutput ?? ''}
+            locals={grid2dView?.locals ?? event.locals ?? null}
+            currentLocals={event.locals ?? null}
+            oldValue={grid2dView?.oldValue ?? null}
+            arrayEvent={grid2dView?.arrayEvent ?? null}
+            event={event}
+            runError={runError}
+            isLastStep={currentStep >= allEvents.length}
             theme={theme}
           />
         ) : isHashSession ? (
@@ -662,6 +727,13 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             totalSteps={totalSteps ?? 0}
             userOutput={event.userOutput ?? ''}
             locals={event.locals   ?? null}
+            name={(event.activeArrayVar && event.activeArrayVar !== '__default__') ? event.activeArrayVar
+                  : (event.arrays?.length ? event.arrays[event.arrays.length - 1].name : null)}
+            oldValue={event.oldValue ?? null}
+            arrayEvent={event.arrayEvent ?? null}
+            event={event}
+            runError={runError}
+            isLastStep={currentStep >= allEvents.length}
             theme={theme}
           />
         )}

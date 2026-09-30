@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
+import {
+  HEAD_NAMES, TAIL_NAMES, STRUCTURE_LABEL, KIND_META, TONE_COLOR,
+  buildGraph, diffGraphs, movedPointers, removedNodes, isNullId, isNullAccessError, nodeKey,
+} from './linkedList/llModel';
 
 /**
  * LinkedListVisualizer — v2 (Fixed Edition)
@@ -6,6 +10,12 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
  * FIX-1 ▸ Stable SVG marker IDs via SharedArrowDefs — eliminates flicker
  * FIX-2 ▸ Clear address labeling: "Addr: 0xXXX" on node header + arrow annotations
  * FIX-3 ▸ Cycle detection + Bezier arc overlay for backward/cycle pointers
+ *
+ * v3 (pointer-accurate)
+ *  ▸ Renders the real pointer graph of each execution step (llModel.js):
+ *    unlinked nodes, per-variable pointer chips that glide between nodes,
+ *    data-driven prev arrows, tail → head ring, dangling edges.
+ *  ▸ Null-access banner, step-effect chips and a debug panel.
  */
 
 /* ══════════════════════════════════════════════════════
@@ -133,6 +143,7 @@ const PALETTE = {
   },
 };
 
+
 export default function LinkedListVisualizer({
   linkedListState = [],
   activeNodeId    = -1,
@@ -143,6 +154,15 @@ export default function LinkedListVisualizer({
   userOutput      = '',
   isDoubly: isDoublyProp = false,
   theme           = 'dark',
+  // ── pointer-aware extras (all optional — legacy traces simply omit them) ──
+  kind            = null,      // CREATE_NODE | SET_NEXT | SET_PREV | SET_HEAD | SET_PTR | COMPARE …
+  ptrs            = null,      // { varName: nodeId | -1 }
+  ring            = null,      // tail.next === head, as reported by the tracer
+  prevEvent       = null,      // { linkedListState, ptrs, ring } of the step before this one
+  moduleSlug      = '',
+  currentLine     = null,
+  runError        = '',        // run-level error text (shown on the final step)
+  isLastStep      = false,
 }) {
   const pal = PALETTE[theme] || PALETTE.dark;
   const [flashSet, setFlashSet]           = useState(new Set());
@@ -153,6 +173,7 @@ export default function LinkedListVisualizer({
   const [zoom, setZoom]                   = useState(1);
   const [layoutMode, setLayoutMode]       = useState('wrap'); // 'wrap' | 'horizontal'
   const [showAddresses, setShowAddresses] = useState(true);
+  const [debug, setDebug]                 = useState(false);
   const containerRef                       = useRef(null);
 
   // Detect Doubly Linked List (via prop, sticky memory, or node data)
@@ -165,27 +186,37 @@ export default function LinkedListVisualizer({
     return detected;
   }, [isDoublyProp, linkedListState]);
 
-  // Generate deterministic hex memory addresses
+  /* ── Model: event snapshot → graph → semantic diff (see llModel.js) ── */
+  const graph = useMemo(
+    () => buildGraph(linkedListState, { ptrs, ring, isDoubly, moduleSlug }),
+    [linkedListState, ptrs, ring, isDoubly, moduleSlug]
+  );
+  const prevGraph = useMemo(() => {
+    if (!prevEvent) return null;
+    return buildGraph(prevEvent.linkedListState, {
+      ptrs: prevEvent.ptrs, ring: prevEvent.ring, isDoubly, moduleSlug,
+    });
+  }, [prevEvent, isDoubly, moduleSlug]);
+  const diff     = useMemo(() => diffGraphs(prevGraph, graph), [prevGraph, graph]);
+  const moved    = useMemo(() => movedPointers(prevGraph, graph), [prevGraph, graph]);
+  const removed  = useMemo(() => removedNodes(prevGraph, graph), [prevGraph, graph]);
+
+  // Generate deterministic hex memory addresses (covers chain, unlinked and removed nodes)
   const addrMap = useMemo(() => {
     const map = new Map();
-    linkedListState.forEach((node, idx) => {
+    const hex = (node, idx) => {
       const hash = typeof node.id === 'number' && node.id < 1000
         ? (0x100 + node.id * 0x30)
         : (0x100 + ((Math.abs(Number(node.id) || idx)) % 0x8FF));
       map.set(node.id, '0x' + hash.toString(16).toUpperCase().padStart(3, '0'));
-    });
+    };
+    linkedListState.forEach(hex);
+    removed.forEach(hex);
     return map;
-  }, [linkedListState]);
+  }, [linkedListState, removed]);
 
-  const headNode = useMemo(() => {
-    return linkedListState.find(n => n.isHead) || linkedListState[0] || null;
-  }, [linkedListState]);
-
-  const tailNode = useMemo(() => {
-    if (linkedListState.length === 0) return null;
-    return linkedListState.find(n => n.nextId === null || n.nextId === -1 || n.nextId === undefined) ||
-           linkedListState[linkedListState.length - 1];
-  }, [linkedListState]);
+  const headNode = graph.chain[0] || null;
+  const tailNode = graph.chain.length ? graph.chain[graph.chain.length - 1] : null;
 
   /* ── Flash & mutation detection ── */
   useEffect(() => {
@@ -227,6 +258,14 @@ export default function LinkedListVisualizer({
   }, [resizing]);
 
   const empty = linkedListState.length === 0;
+  // A ring can only be drawn cleanly on a single row — snake-wrapping would
+  // route the tail→head arc straight through the rows in between.
+  const effectiveLayout = graph.circular ? 'horizontal' : layoutMode;
+  const kindMeta  = kind ? KIND_META[kind] : null;
+  const tones     = TONE_COLOR[theme] || TONE_COLOR.dark;
+  const kindColor = kindMeta ? tones[kindMeta.tone] : getTypeColor(type, theme);
+  const showRunError = Boolean(runError) && isLastStep;
+  const nullAccess   = showRunError && isNullAccessError(runError);
 
   return (
     <div
@@ -262,12 +301,12 @@ export default function LinkedListVisualizer({
             background: pal.badgeBg,
             border: `1px solid ${pal.badgeBorder}`,
           }}>
-            <span style={{ fontSize: 13 }}>{isDoubly ? '⇄' : '⛓'}</span>
+            <span style={{ fontSize: 13 }}>{graph.circular ? '↻' : graph.isDoubly ? '⇄' : '⛓'}</span>
             <span style={{
               fontSize: 11, fontWeight: 700, color: pal.badgeText,
               textTransform: 'uppercase', letterSpacing: '.06em',
             }}>
-              {isDoubly ? 'Doubly Linked List' : 'Linked List'}
+              {STRUCTURE_LABEL[graph.structure]}
             </span>
           </div>
 
@@ -280,7 +319,10 @@ export default function LinkedListVisualizer({
             fontSize: 11, fontWeight: 600, color: '#38bdf8',
           }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
-            {linkedListState.length} {linkedListState.length === 1 ? 'Node' : 'Nodes'}
+            {graph.chain.length} {graph.chain.length === 1 ? 'Node' : 'Nodes'}
+            {graph.floating.length > 0 && (
+              <span style={{ opacity: 0.75 }}> · {graph.floating.length} unlinked</span>
+            )}
           </div>
 
           {/* Head peek pill */}
@@ -311,12 +353,28 @@ export default function LinkedListVisualizer({
             </div>
           )}
 
-          {/* Active Operation pill */}
-          <OperationBadge type={type} theme={theme} />
+          {/* Active Operation pill (legacy traces without a semantic kind) */}
+          {!kindMeta && <OperationBadge type={type} theme={theme} />}
         </div>
 
         {/* Right: View & Zoom Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Debug panel toggle */}
+          <button
+            onClick={() => setDebug(v => !v)}
+            title="Toggle debug panel (event, pointers, head/tail)"
+            aria-pressed={debug}
+            style={{
+              padding: '4px 8px', borderRadius: 6,
+              background: debug ? 'rgba(236, 72, 153, 0.18)' : pal.btnBg,
+              border: `1px solid ${debug ? 'rgba(236, 72, 153, 0.5)' : pal.btnBorder}`,
+              color: debug ? '#f472b6' : pal.btnText,
+              fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Debug
+          </button>
+
           {/* Memory addresses toggle */}
           <button
             onClick={() => setShowAddresses(v => !v)}
@@ -337,15 +395,19 @@ export default function LinkedListVisualizer({
           {/* Layout Mode Toggle */}
           <button
             onClick={() => setLayoutMode(m => m === 'wrap' ? 'horizontal' : 'wrap')}
-            title={layoutMode === 'wrap' ? 'Switch to Continuous Horizontal Line' : 'Switch to Snake Row Wrap'}
+            disabled={graph.circular}
+            title={graph.circular
+              ? 'Circular lists are always drawn on one row so the tail → head link stays readable'
+              : layoutMode === 'wrap' ? 'Switch to Continuous Horizontal Line' : 'Switch to Snake Row Wrap'}
             style={{
               padding: '4px 8px', borderRadius: 6,
               background: pal.btnBg,
               border: `1px solid ${pal.btnBorder}`,
-              color: pal.btnText, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              color: graph.circular ? pal.btnTextDisabled : pal.btnText,
+              fontSize: 11, fontWeight: 600, cursor: graph.circular ? 'default' : 'pointer',
             }}
           >
-            {layoutMode === 'wrap' ? '⤾ Wrap' : '→ Line'}
+            {effectiveLayout === 'wrap' ? '⤾ Wrap' : '→ Line'}
           </button>
 
           {/* Zoom controls */}
@@ -356,12 +418,12 @@ export default function LinkedListVisualizer({
             borderRadius: 6, overflow: 'hidden',
           }}>
             <button
-              onClick={() => setZoom(z => Math.max(0.6, Math.round((z - 0.1) * 10) / 10))}
-              disabled={zoom <= 0.6}
+              onClick={() => setZoom(z => Math.max(0.4, Math.round((z - 0.1) * 10) / 10))}
+              disabled={zoom <= 0.4}
               title="Zoom out"
               style={{
                 padding: '3px 8px', background: 'none', border: 'none',
-                color: zoom <= 0.6 ? pal.btnTextDisabled : pal.zoomText, fontSize: 13, cursor: zoom <= 0.6 ? 'default' : 'pointer',
+                color: zoom <= 0.4 ? pal.btnTextDisabled : pal.zoomText, fontSize: 13, cursor: zoom <= 0.4 ? 'default' : 'pointer',
               }}
             >−</button>
             <span
@@ -398,8 +460,8 @@ export default function LinkedListVisualizer({
         </div>
       </header>
 
-      {/* ── FLOATING STEP ACTION BANNER ── */}
-      {description && (
+      {/* ── STEP ACTION BANNER: what this step did + its semantic effects ── */}
+      {(description || kindMeta) && (
         <div style={{
           margin: '12px 20px 0',
           padding: '8px 16px',
@@ -409,36 +471,129 @@ export default function LinkedListVisualizer({
           WebkitBackdropFilter: 'blur(12px)',
           border: `1px solid ${pal.descBorder}`,
           boxShadow: theme === 'light' ? '0 4px 16px rgba(15,23,42,0.06)' : '0 4px 20px rgba(0,0,0,0.3)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', flexDirection: 'column', gap: 6,
           flexShrink: 0,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 16 }}>{getTypeIcon(type)}</span>
-            <span style={{
-              fontSize: 12.5, fontWeight: 600,
-              color: getTypeColor(type, theme), letterSpacing: '.01em',
-            }}>
-              {description}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+              {kindMeta ? (
+                <span style={{
+                  padding: '2px 8px', borderRadius: 5, flexShrink: 0,
+                  background: `${kindColor}22`, border: `1px solid ${kindColor}55`,
+                  color: kindColor, fontSize: 10, fontWeight: 800, letterSpacing: '.06em',
+                }}>
+                  {kindMeta.icon} {kindMeta.label}
+                </span>
+              ) : (
+                <span style={{ fontSize: 16 }}>{getTypeIcon(type)}</span>
+              )}
+              <span style={{
+                fontSize: 12.5, fontWeight: 600, letterSpacing: '.01em',
+                color: kindMeta ? pal.text : getTypeColor(type, theme),
+                fontFamily: kindMeta ? "'JetBrains Mono', monospace" : 'inherit',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }} title={description}>
+                {description}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              {currentLine ? (
+                <span style={{
+                  fontSize: 11, fontWeight: 600, color: pal.textMuted,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  padding: '2px 8px', borderRadius: 4, background: pal.addrPillBg,
+                }}>
+                  Line {currentLine}
+                </span>
+              ) : null}
+              {activeNodeId !== -1 && activeNodeId !== null && addrMap.has(activeNodeId) && (
+                <span style={{
+                  fontSize: 11, fontWeight: 600, color: pal.textMuted,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  padding: '2px 8px', borderRadius: 4,
+                  background: pal.addrPillBg,
+                }}>
+                  Active: {addrMap.get(activeNodeId)}
+                </span>
+              )}
+            </div>
           </div>
 
-          {activeNodeId !== -1 && activeNodeId !== null && addrMap.has(activeNodeId) && (
-            <span style={{
-              fontSize: 11, fontWeight: 600, color: pal.textMuted,
-              fontFamily: "'JetBrains Mono', monospace",
-              padding: '2px 8px', borderRadius: 4,
-              background: pal.addrPillBg,
-            }}>
-              Active: {addrMap.get(activeNodeId)}
-            </span>
+          {/* Effects of this step — derived by diffing the previous and current graph */}
+          {diff.length > 0 && kindMeta && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {diff.slice(0, 5).map((d, i) => (
+                <span key={i} style={{
+                  fontSize: 10.5, fontWeight: 600, color: pal.codeChipText,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  padding: '1px 8px', borderRadius: 4,
+                  background: pal.codeChipBg, border: `1px solid ${pal.codeChipBorder}`,
+                }}>
+                  {d.text || (d.type === 'CREATE_NODE' ? `+ node ${d.value}` : d.type === 'DELETE_NODE' ? `− node ${d.value} unreachable` : d.type === 'UPDATE_VALUE' ? `value ${d.from} → ${d.to}` : d.type)}
+                </span>
+              ))}
+            </div>
           )}
+        </div>
+      )}
+
+      {/* ── POINTER LEGEND: every tracked reference, including NULL ones ── */}
+      {graph.ptrs && Object.keys(graph.ptrs).length > 0 && (
+        <div style={{ margin: '8px 20px 0', display: 'flex', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
+          {Object.entries(graph.ptrs).map(([name, id]) => {
+            const target = isNullId(id) ? null : graph.byId.get(id);
+            const isMoved = moved.has(name);
+            const col = isNullId(id) ? (theme === 'light' ? '#b91c1c' : '#f87171') : pointerColor(name, theme);
+            return (
+              <span key={name} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '2px 8px', borderRadius: 999,
+                fontSize: 10.5, fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                color: col,
+                background: isMoved ? `${col}26` : `${col}10`,
+                border: `1px solid ${isMoved ? col : col + '44'}`,
+                transition: 'all 240ms ease',
+              }}>
+                {name}
+                <span style={{ opacity: 0.6 }}>{target ? '→' : '='}</span>
+                {target ? `[${target.val}]` : 'NULL'}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── RUNTIME ERROR: stop the story at the step that failed ── */}
+      {showRunError && (
+        <div role="alert" style={{
+          margin: '10px 20px 0', padding: '10px 14px', borderRadius: 10, flexShrink: 0,
+          background: 'rgba(239, 68, 68, 0.10)', border: '1px solid rgba(239, 68, 68, 0.45)',
+          color: theme === 'light' ? '#991b1b' : '#fecaca',
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800 }}>
+            ⚠ {nullAccess ? 'Null Reference Access' : 'Execution stopped with an error'}
+          </div>
+          {nullAccess && graph.nullPtrs.length > 0 && (
+            <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
+              {graph.nullPtrs.map(n => `${n} = NULL`).join('   ·   ')}
+            </div>
+          )}
+          <div style={{ fontSize: 11.5, opacity: 0.85, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {runError.split('\n')[0].slice(0, 220)}
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>
+            Execution stopped here — no further steps are rendered.
+          </div>
         </div>
       )}
 
       {/* ── MAIN INTERACTIVE CANVAS ── */}
       <main style={{
         flex: 1, minHeight: 0, overflow: 'auto',
-        padding: isDoubly ? '48px 32px 32px' : '36px 32px 32px',
+        padding: '12px 32px 32px',
         display: 'flex', alignItems: 'flex-start',
       }}>
         <div style={{
@@ -448,15 +603,17 @@ export default function LinkedListVisualizer({
           minWidth: 'fit-content',
         }}>
           {empty ? (
-            <EmptyHint isDoubly={isDoubly} theme={theme} />
+            <EmptyHint isDoubly={isDoubly} circular={graph.circular} theme={theme} />
           ) : (
             <NodeChain
-              nodes={linkedListState}
+              graph={graph}
+              removed={removed}
+              moved={moved}
               activeNodeId={activeNodeId}
               flashSet={flashSet}
               type={type}
-              isDoubly={isDoubly}
-              layoutMode={layoutMode}
+              isDoubly={graph.isDoubly}
+              layoutMode={effectiveLayout}
               showAddresses={showAddresses}
               addrMap={addrMap}
               zoom={zoom}
@@ -465,6 +622,34 @@ export default function LinkedListVisualizer({
           )}
         </div>
       </main>
+
+      {/* ── DEBUG PANEL ── */}
+      {debug && (
+        <pre style={{
+          position: 'absolute', left: 12, bottom: userOutput ? stdoutH + 16 : 12,
+          maxWidth: 'min(420px, 70%)', maxHeight: '45%', overflow: 'auto', margin: 0,
+          padding: '10px 12px', borderRadius: 10, zIndex: 30,
+          background: theme === 'light' ? 'rgba(255,255,255,0.96)' : 'rgba(4,7,17,0.94)',
+          border: `1px solid ${pal.hairline}`, color: pal.text,
+          fontSize: 11, lineHeight: 1.55, fontFamily: "'JetBrains Mono', Consolas, monospace",
+          boxShadow: '0 8px 30px rgba(0,0,0,0.35)', whiteSpace: 'pre-wrap',
+        }}>
+{`Execution Step: ${step}${totalSteps ? ' / ' + totalSteps : ''}
+Source line:    ${currentLine ?? '-'}
+
+Event:          ${kind || '(snapshot)'}
+${diff.length ? diff.map(d =>
+`  ${d.type}${d.nodeId ? '  ' + d.nodeId : ''}${d.variable ? '  ' + d.variable : ''}${(d.from !== undefined || d.to !== undefined) ? `\n    From: ${d.from ?? 'null'}\n    To:   ${d.to ?? 'null'}` : ''}`
+).join('\n') : '  (no structural change)'}
+
+Structure:      ${graph.structure}${graph.ring ? '  (tail.next → head)' : ''}
+Current Head:   ${graph.headId != null ? nodeKey(graph.headId) : 'null'}
+Current Tail:   ${graph.tailId != null ? nodeKey(graph.tailId) : 'null'}
+Linked / Unlinked nodes: ${graph.chain.length} / ${graph.floating.length}
+Pointers:
+${graph.ptrs ? Object.entries(graph.ptrs).map(([k, v]) => `  ${k.padEnd(10)} ${isNullId(v) ? 'null' : nodeKey(v)}`).join('\n') : '  (not reported by tracer)'}`}
+        </pre>
+      )}
 
       {/* ── STDOUT TERMINAL DRAWER ── */}
       {userOutput && (
@@ -506,13 +691,45 @@ export default function LinkedListVisualizer({
   );
 }
 
+/** Colour for a pointer variable name (head/tail keep fixed, semantic colours). */
+function pointerColor(name, theme = 'dark') {
+  const light = theme === 'light';
+  if (HEAD_NAMES.includes(name)) return light ? '#b45309' : '#f59e0b';
+  if (TAIL_NAMES.includes(name)) return light ? '#4338ca' : '#818cf8';
+  return light ? '#0e7490' : '#38bdf8';
+}
+
 /* ══════════════════════════════════════════════════════
-   NodeChain Layout Engine + FIX-3 Cycle Detection
+   NodeChain Layout Engine
+   ──────────────────────────────────────────────────────
+   - `graph.chain`    nodes linked from head, drawn in rows with inline arrows
+   - `graph.floating` nodes that exist but are NOT linked into the list
+                      (new node before it is attached, a spliced-out node that
+                      is still referenced) — drawn in their own "unlinked" lane
+   - `removed`        nodes that became unreachable in THIS step (ghosts for one
+                      step, so a deletion is visible before the node vanishes)
+   - pointer chips    (head/tail/temp/cur/…) are an absolutely positioned
+                      overlay keyed by variable name, so a moving pointer
+                      GLIDES from node to node instead of teleporting
+   - edge overlay     cycle / ring arcs and any edge touching an unlinked node
    ══════════════════════════════════════════════════════ */
 const ROW_SIZE = 5;
+const CHIP_H = 22;
+
+function sameLayout(a, b) {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const p = a[k], q = b[k];
+    if (!q || p.l !== q.l || p.r !== q.r || p.t !== q.t || p.b !== q.b) return false;
+  }
+  return true;
+}
 
 function NodeChain({
-  nodes,
+  graph,
+  removed,
+  moved,
   activeNodeId,
   flashSet,
   type,
@@ -524,10 +741,13 @@ function NodeChain({
   theme = 'dark',
 }) {
   const pal = PALETTE[theme] || PALETTE.dark;
+  const nodes    = graph.chain;
+  const floating = graph.floating;
+  const nodeById = graph.byId;
   const containerRef = useRef(null);
-  // nodeId -> DOM element (the node card div)
+  // nodeId -> DOM element (wrapper around the node card; never transformed)
   const nodeElRefs = useRef(new Map());
-  const [arcData, setArcData] = useState([]);
+  const [layout, setLayout] = useState({});
 
   const rows = useMemo(() => {
     if (layoutMode === 'horizontal') return [nodes];
@@ -538,139 +758,210 @@ function NodeChain({
     return r;
   }, [nodes, layoutMode]);
 
-  /* FIX-3: Build node-index map for cycle detection */
   const indexMap = useMemo(() => {
     const m = new Map();
     nodes.forEach((n, i) => m.set(n.id, i));
     return m;
   }, [nodes]);
 
-  /* DLL enhancement: id -> node lookup, so each NodeCard can verify its
-     own back-pointer is actually reciprocated (node.next.prev === node),
-     the single most common DLL bug — a plain address string alone can't
-     show that; comparing the live node data can. */
-  const nodeById = useMemo(() => {
-    const m = new Map();
-    nodes.forEach(n => m.set(n.id, n));
-    return m;
-  }, [nodes]);
-
-  /* FIX-3: Identify backward/cycle edges */
+  /* Backward / ring edges between chain nodes (next or prev pointing to an
+     earlier/same node, or prev pointing forward). The tail → head link of a
+     circular list is the special case `isRing`. */
   const cycleEdges = useMemo(() => {
     const edges = [];
+    const last = nodes.length - 1;
     nodes.forEach((n, i) => {
-      // next pointer going to an earlier or same node = cycle
-      if (n.nextId != null && n.nextId !== -1 && n.nextId !== undefined) {
+      if (!isNullId(n.nextId)) {
         const ti = indexMap.get(n.nextId);
         if (ti !== undefined && ti <= i) {
-          edges.push({ fromId: n.id, toId: n.nextId, fromIdx: i, toIdx: ti, pointerType: 'next' });
+          edges.push({ fromId: n.id, toId: n.nextId, pointerType: 'next', isRing: ti === 0 && i === last });
         }
       }
-      // For DLL: prev pointer going to a later node = unusual/cycle
-      if (n.prevId != null && n.prevId !== -1 && n.prevId !== undefined) {
+      if (!isNullId(n.prevId)) {
         const ti = indexMap.get(n.prevId);
         if (ti !== undefined && ti > i) {
-          edges.push({ fromId: n.id, toId: n.prevId, fromIdx: i, toIdx: ti, pointerType: 'prev' });
+          edges.push({ fromId: n.id, toId: n.prevId, pointerType: 'prev', isRing: i === 0 && ti === last });
         }
       }
     });
     return edges;
   }, [nodes, indexMap]);
 
-  /* FIX-3: Register node element ref callback */
-  const registerNodeRef = useCallback((nodeId, el) => {
-    if (el) {
-      nodeElRefs.current.set(nodeId, el);
-    } else {
-      nodeElRefs.current.delete(nodeId);
-    }
-  }, []);
+  const cycleSources = useMemo(() => {
+    const s = new Set();
+    cycleEdges.forEach(e => { if (e.pointerType === 'next') s.add(e.fromId); });
+    return s;
+  }, [cycleEdges]);
 
-  /* FIX-3: Measure DOM positions after render to compute arc coordinates.
-   *
-   * IMPORTANT: this container sits inside an ancestor with
-   * `transform: scale(zoom)` (the zoom controls in the toolbar above).
-   * getBoundingClientRect() returns POST-transform screen pixels, so the
-   * raw deltas below are already scaled by `zoom`. But the <svg> overlay
-   * we draw these coordinates into is itself a child of that SAME scaled
-   * ancestor — meaning the browser scales it AGAIN when painting. Left
-   * unfixed, the arc lands at the right screen position at 100% zoom
-   * (where the double-scale is a no-op) but drifts further off the real
-   * node position at any other zoom level. Dividing every measured delta
-   * by `zoom` here converts them back into the ancestor's local
-   * (pre-scale) coordinate space, which is what an element living inside
-   * that scaled ancestor should be positioned in.
-   */
-  const measureArcs = useCallback(() => {
-    const containerEl = containerRef.current;
-    if (!containerEl || cycleEdges.length === 0) return;
-    const containerRect = containerEl.getBoundingClientRect();
-    const z = zoom || 1;
-    const arcs = [];
-
-    for (const edge of cycleEdges) {
-      const fromEl = nodeElRefs.current.get(edge.fromId);
-      const toEl   = nodeElRefs.current.get(edge.toId);
-      if (!fromEl || !toEl) continue;
-
-      const fRect = fromEl.getBoundingClientRect();
-      const tRect = toEl.getBoundingClientRect();
-
-      // exit from right-center of source, enter left-center of target
-      arcs.push({
-        ...edge,
-        fx: (fRect.right  - containerRect.left) / z,
-        fy: (fRect.top    - containerRect.top + fRect.height / 2) / z,
-        tx: (tRect.left   - containerRect.left) / z,
-        ty: (tRect.top    - containerRect.top + tRect.height / 2) / z,
-        arcFloor: (Math.max(fRect.bottom, tRect.bottom) - containerRect.top) / z + 72,
+  /* Edges that cannot be drawn as an inline arrow: anything starting at an
+     unlinked node, and a chain node's prev pointing at an unlinked node. */
+  const extraEdges = useMemo(() => {
+    const out = [];
+    const push = (from, to, kind) => {
+      if (isNullId(to) || !nodeById.has(to)) return;
+      out.push({ fromId: from.id, toId: to, kind, dangling: floating.includes(from) });
+    };
+    floating.forEach(n => {
+      push(n, n.nextId, 'next');
+      if (isDoubly) push(n, n.prevId, 'prev');
+    });
+    if (isDoubly) {
+      nodes.forEach(n => {
+        if (!isNullId(n.prevId) && nodeById.has(n.prevId) && !indexMap.has(n.prevId)) {
+          out.push({ fromId: n.id, toId: n.prevId, kind: 'prev', dangling: false });
+        }
       });
     }
-    setArcData(arcs);
-  }, [cycleEdges, zoom]);
+    return out;
+  }, [floating, nodes, nodeById, indexMap, isDoubly]);
 
-  useEffect(() => {
-    if (cycleEdges.length === 0) {
-      setArcData([]);
-      return;
+  /* Pointer chips per node, bottom-up: structural HEAD/TAIL first, then every
+     tracked variable (head, tail, temp, cur, …) in declaration order. */
+  const chipsByNode = useMemo(() => {
+    const map = new Map();
+    const add = (id, chip) => {
+      if (!map.has(id)) map.set(id, []);
+      map.get(id).push(chip);
+    };
+    // Structural HEAD/TAIL markers are only a fallback: when the program has
+    // its own head/tail variable, THAT chip is the truth (mid-operation the
+    // variable can legitimately point somewhere other than the chain ends).
+    const hasVar = (names) => Boolean(graph.ptrs) && names.some(n => n in graph.ptrs);
+    if (nodes.length) {
+      const h = nodes[0].id;
+      const t = nodes[nodes.length - 1].id;
+      if (!hasVar(HEAD_NAMES)) {
+        add(h, { key: '__head', label: 'HEAD', color: pointerColor('head', theme), implicit: true });
+      }
+      if ((isDoubly || graph.circular) && !hasVar(TAIL_NAMES)) {
+        add(t, { key: '__tail', label: 'TAIL', color: pointerColor('tail', theme), implicit: true });
+      }
     }
-    const raf = requestAnimationFrame(measureArcs);
-    return () => cancelAnimationFrame(raf);
-  }, [cycleEdges, nodes, layoutMode, zoom, measureArcs]);
-
-  // Re-measure whenever the container (or an ancestor panel) resizes —
-  // e.g. dragging the horizontal/vertical split handles elsewhere in the
-  // workspace, or the browser window resizing — since none of those
-  // trigger the effect above (its deps only track data/zoom changes),
-  // and stale coordinates are exactly what makes the arc look "off".
-  useEffect(() => {
-    if (cycleEdges.length === 0) return;
-    const containerEl = containerRef.current;
-    if (!containerEl || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
-      requestAnimationFrame(measureArcs);
+    graph.ptrsByNode.forEach((names, id) => {
+      names.forEach(n => add(id, { key: `ptr-${n}`, label: n, color: pointerColor(n, theme), moved: moved.has(n) }));
     });
-    ro.observe(containerEl);
-    // The scroll container (<main>, overflow:auto) can also change size
-    // independently of containerEl's own layout box.
-    const scrollParent = containerEl.closest('main');
+    // Legacy traces carry no variable map: fall back to a single gliding cursor
+    if (!graph.ptrs && activeNodeId != null && activeNodeId !== -1 && nodeById.has(activeNodeId)) {
+      add(activeNodeId, { key: '__active', label: 'POINTER', color: getTypeColor(type, theme), moved: true });
+    }
+    return map;
+  }, [graph, nodes, moved, theme, isDoubly, activeNodeId, nodeById, type]);
+
+  const maxStack = useMemo(() => {
+    let m = 1;
+    chipsByNode.forEach(c => { if (c.length > m) m = c.length; });
+    return m;
+  }, [chipsByNode]);
+
+  const registerNodeRef = useCallback((nodeId, el) => {
+    if (el) nodeElRefs.current.set(nodeId, el);
+    else nodeElRefs.current.delete(nodeId);
+  }, []);
+
+  /* Measure every registered node relative to the container. The container
+     lives inside an ancestor with `transform: scale(zoom)`; getBoundingClientRect
+     returns post-transform pixels, so dividing by `zoom` converts back into the
+     container's own coordinate space (where the overlays are positioned). The
+     state only changes when a number actually changes, so this cannot loop. */
+  const measure = useCallback(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const cr = c.getBoundingClientRect();
+    const z = zoom || 1;
+    const next = {};
+    nodeElRefs.current.forEach((el, id) => {
+      const r = el.getBoundingClientRect();
+      const l = Math.round((r.left - cr.left) / z);
+      const rr = Math.round((r.right - cr.left) / z);
+      const t = Math.round((r.top - cr.top) / z);
+      const b = Math.round((r.bottom - cr.top) / z);
+      next[id] = { l, r: rr, t, b, cx: Math.round((l + rr) / 2), cy: Math.round((t + b) / 2) };
+    });
+    setLayout(prev => (sameLayout(prev, next) ? prev : next));
+  }, [zoom]);
+
+  useLayoutEffect(() => { measure(); });
+
+  // Re-measure when the container or the scroll parent resizes (panel drags,
+  // window resize) — none of which re-render this component.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    });
+    ro.observe(el);
+    const scrollParent = el.closest('main');
     if (scrollParent) ro.observe(scrollParent);
-    return () => ro.disconnect();
-  }, [cycleEdges.length, measureArcs]);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [measure]);
+
+  // Keep the node being worked on in view (centered horizontally) in long lists.
+  useEffect(() => {
+    let target = activeNodeId;
+    if (target == null || target === -1) {
+      for (const name of moved) {
+        const id = graph.ptrs ? graph.ptrs[name] : undefined;
+        if (!isNullId(id)) { target = id; break; }
+      }
+    }
+    const el = target != null ? nodeElRefs.current.get(target) : null;
+    if (!el || typeof el.scrollIntoView !== 'function') return;
+    const reduce = typeof window !== 'undefined' && window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  }, [activeNodeId, moved, graph]);
+
+  const rowGap = (isDoubly ? 64 : 52) + (maxStack - 1) * CHIP_H;
+  const hasLane = floating.length > 0 || removed.length > 0;
 
   return (
     <div
       ref={containerRef}
       style={{
         display: 'flex', flexDirection: 'column',
-        gap: isDoubly ? 64 : 52, padding: '10px 0',
-        position: 'relative', // needed for absolute arc overlay
+        gap: rowGap,
+        padding: `${maxStack * (CHIP_H + 2) + 14}px 0 ${cycleEdges.length ? 88 : 10}px`,
+        position: 'relative', // anchor for the pointer + edge overlays
       }}
     >
-      {/* FIX-3: Cycle arc SVG overlay */}
-      {arcData.length > 0 && (
-        <CycleArcOverlay arcs={arcData} />
-      )}
+      {/* Ring / cycle arcs and edges touching unlinked nodes */}
+      <EdgeOverlay cycleEdges={cycleEdges} extraEdges={extraEdges} layout={layout} theme={theme} />
+
+      {/* Pointer chips — keyed by variable name so moves animate */}
+      {[...chipsByNode].flatMap(([id, chips]) => {
+        const r = layout[id];
+        if (!r) return [];
+        return chips.map((c, i) => (
+          <div
+            key={c.key}
+            aria-label={`${c.label} points here`}
+            style={{
+              position: 'absolute', left: 0, top: 0, zIndex: 10, pointerEvents: 'none',
+              transform: `translate(${r.cx}px, ${r.t - 6 - (i + 1) * CHIP_H}px) translateX(-50%)`,
+              transition: 'transform 420ms cubic-bezier(.4,0,.2,1)',
+              willChange: 'transform',
+            }}
+          >
+            <div style={{
+              height: CHIP_H - 3, display: 'flex', alignItems: 'center', gap: 4,
+              padding: '0 8px', borderRadius: 5, whiteSpace: 'nowrap',
+              background: c.implicit ? `${c.color}1f` : c.moved ? c.color : `${c.color}33`,
+              border: `1px solid ${c.implicit ? c.color + '66' : c.color}`,
+              color: c.implicit || !c.moved ? c.color : (theme === 'light' ? '#ffffff' : '#090d16'),
+              fontSize: 10, fontWeight: 800, letterSpacing: c.implicit ? '.08em' : '.02em',
+              fontFamily: "'JetBrains Mono', monospace",
+              boxShadow: c.moved ? `0 2px 10px ${c.color}77` : 'none',
+              textTransform: c.implicit ? 'uppercase' : 'none',
+            }}>
+              {c.label}
+              {i === 0 && <span style={{ fontSize: 9, marginLeft: 1 }}>▼</span>}
+            </div>
+          </div>
+        ));
+      })}
 
       {rows.map((row, rowIdx) => {
         const isEven    = rowIdx % 2 === 0;
@@ -687,18 +978,21 @@ function NodeChain({
 
                 const isActive   = node.id === activeNodeId;
                 const isFlashing = flashSet.has(node.id);
-                const isHead     = Boolean(node.isHead || globalIdx === 0);
                 const isLast     = globalIdx === nodes.length - 1;
                 const hasArrow   = colIdx < display.length - 1;
                 const isRowEnd   = colIdx === display.length - 1;
                 const hasWrap    = !isLast && isRowEnd && layoutMode === 'wrap';
-
-                // Is this node the SOURCE of a cycle edge? (suppress the normal arrow at row-end)
-                const isCycleSource = cycleEdges.some(e => e.fromId === node.id && e.pointerType === 'next');
+                const isCycleSource = cycleSources.has(node.id);
 
                 // Target address for the connector arrow (FIX-2)
                 const nextNode = hasArrow ? display[colIdx + 1] : null;
                 const arrowTargetAddr = nextNode ? (addrMap.get(nextNode.id) || null) : null;
+                // Is the visual "prev" arrow real? Only when B.prev actually is A.
+                const prevOk = nextNode
+                  ? (isEven || layoutMode === 'horizontal'
+                      ? nextNode.prevId === node.id
+                      : node.prevId === nextNode.id)
+                  : true;
 
                 return (
                   <div key={node.id} style={{ display: 'flex', alignItems: 'center' }}>
@@ -706,71 +1000,6 @@ function NodeChain({
                       display: 'flex', flexDirection: 'column',
                       alignItems: 'center', position: 'relative',
                     }}>
-                      {/* Active Cursor Pointer indicator */}
-                      {isActive && (
-                        <div
-                          className="bounce-pointer"
-                          style={{
-                            position: 'absolute',
-                            top: isDoubly ? -38 : -32,
-                            display: 'flex', flexDirection: 'column',
-                            alignItems: 'center', zIndex: 10,
-                          }}
-                        >
-                          <span style={{
-                            padding: '2px 8px', borderRadius: 4,
-                            background: getTypeColor(type, theme), color: '#090d16',
-                            fontSize: 10, fontWeight: 800, letterSpacing: '.06em',
-                            boxShadow: `0 2px 10px ${getTypeColor(type, theme)}88`,
-                          }}>
-                            POINTER
-                          </span>
-                          <span style={{
-                            fontSize: 11, color: getTypeColor(type, theme),
-                            lineHeight: 1, marginTop: -1,
-                          }}>▼</span>
-                        </div>
-                      )}
-
-                      {/* Head / Tail Tags above Node — DLL enhancement: a
-                          doubly linked list is defined by traversal in
-                          BOTH directions, so marking the tail explicitly
-                          (not just an implicit NULL at the end) makes that
-                          symmetry visible at a glance, same as HEAD does
-                          for forward traversal. */}
-                      {(isHead || (isDoubly && isLast && !isCycleSource)) && !isActive && (
-                        <div style={{
-                          marginBottom: 6,
-                          display: 'flex', alignItems: 'center', gap: 6,
-                        }}>
-                          {isHead && (
-                            <div style={{
-                              display: 'flex', alignItems: 'center', gap: 3,
-                              padding: '2px 8px', borderRadius: 4,
-                              background: 'rgba(245, 158, 11, 0.15)',
-                              border: '1px solid rgba(245, 158, 11, 0.4)',
-                              color: '#f59e0b', fontSize: 9.5, fontWeight: 800,
-                              letterSpacing: '.08em', textTransform: 'uppercase',
-                            }}>
-                              <span>👑</span> HEAD
-                            </div>
-                          )}
-                          {isDoubly && isLast && !isCycleSource && (
-                            <div style={{
-                              display: 'flex', alignItems: 'center', gap: 3,
-                              padding: '2px 8px', borderRadius: 4,
-                              background: 'rgba(129, 140, 248, 0.15)',
-                              border: '1px solid rgba(129, 140, 248, 0.4)',
-                              color: '#a5b4fc', fontSize: 9.5, fontWeight: 800,
-                              letterSpacing: '.08em', textTransform: 'uppercase',
-                            }}>
-                              <span>🏁</span> TAIL
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* FIX-3: Ref registration wrapper for cycle arc measurement */}
                       <div ref={el => registerNodeRef(node.id, el)}>
                         <NodeCard
                           node={node}
@@ -786,7 +1015,7 @@ function NodeChain({
                         />
                       </div>
 
-                      {/* Cycle badge on source node (instead of NULL) */}
+                      {/* Ring / cycle badge on the source node (instead of NULL) */}
                       {isLast && isCycleSource ? (
                         <div style={{
                           marginTop: 8, display: 'flex', alignItems: 'center', gap: 4,
@@ -796,9 +1025,9 @@ function NodeChain({
                           color: '#fb923c', fontSize: 10, fontWeight: 700,
                           fontFamily: "'JetBrains Mono', monospace",
                         }}>
-                          <span>↩</span> CYCLE
+                          <span>↻</span> {graph.ring ? 'CIRCULAR' : 'CYCLE'}
                         </div>
-                      ) : isLast && (
+                      ) : isLast && isNullId(node.nextId) && (
                         <div style={{
                           marginTop: 8, display: 'flex', alignItems: 'center', gap: 4,
                           padding: '2px 8px', borderRadius: 4,
@@ -821,6 +1050,7 @@ function NodeChain({
                             isReversed={!isEven && layoutMode === 'wrap'}
                             targetAddr={showAddresses ? arrowTargetAddr : null}
                             prevAddr={showAddresses ? (addrMap.get(node.id) || null) : null}
+                            prevOk={prevOk}
                             theme={theme}
                           />
                         : <SinglyHArrow
@@ -843,90 +1073,158 @@ function NodeChain({
           </div>
         );
       })}
+
+      {/* Unlinked lane: nodes that exist but are not reachable from head */}
+      {hasLane && (
+        <div style={{ marginTop: cycleEdges.length ? 8 : 44, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase',
+            color: theme === 'light' ? '#a16207' : '#fbbf24', display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <span style={{ flex: '0 0 18px', height: 1, background: 'currentColor', opacity: 0.6 }} />
+            Not linked into the list
+            <span style={{ flex: 1, height: 1, background: 'currentColor', opacity: 0.25 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 44, alignItems: 'flex-start', flexWrap: 'wrap', paddingTop: 34 }}>
+            {floating.map(node => (
+              <div key={node.id} ref={el => registerNodeRef(node.id, el)}>
+                <NodeCard
+                  node={node}
+                  index={-1}
+                  detached
+                  isActive={node.id === activeNodeId}
+                  isFlashing={flashSet.has(node.id)}
+                  type={type}
+                  isDoubly={isDoubly}
+                  showAddresses={showAddresses}
+                  addrMap={addrMap}
+                  nodeById={nodeById}
+                  theme={theme}
+                />
+              </div>
+            ))}
+            {removed.map(node => (
+              <div key={`removed-${node.id}`}>
+                <NodeCard
+                  node={node}
+                  index={-1}
+                  removed
+                  isActive={false}
+                  isFlashing={false}
+                  type={type}
+                  isDoubly={isDoubly}
+                  showAddresses={showAddresses}
+                  addrMap={addrMap}
+                  nodeById={nodeById}
+                  theme={theme}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ══════════════════════════════════════════════════════
-   FIX-3: Cycle Arc Overlay — Bezier arcs below nodes
+   EdgeOverlay — bezier edges that cannot be inline arrows
+     • ring / cycle arcs (tail.next → head, head.prev → tail, back edges)
+     • any edge that starts at, or points to, an unlinked node
+   Geometry comes from measured node rectangles (container coordinates).
    ══════════════════════════════════════════════════════ */
-function CycleArcOverlay({ arcs }) {
-  if (!arcs.length) return null;
+function EdgeOverlay({ cycleEdges, extraEdges, layout, theme = 'dark' }) {
+  if (!cycleEdges.length && !extraEdges.length) return null;
+  const labelBg = theme === 'light' ? '#ffffff' : '#0b1020';
+  const items = [];
 
-  // SVG needs to be tall enough to contain all arcs going below
-  const maxBottom = Math.max(...arcs.map(a => a.arcFloor)) + 30;
+  cycleEdges.forEach((e, i) => {
+    const a = layout[e.fromId];
+    const b = layout[e.toId];
+    if (!a || !b) return;
+    const isNext = e.pointerType === 'next';
+    const color = isNext ? '#f97316' : '#818cf8';
+    const self = e.fromId === e.toId;
+    const dx = isNext ? 14 : -14;
+    const sx = self ? a.cx + (isNext ? 22 : -22) : a.cx + dx;
+    const ex = self ? a.cx + (isNext ? -22 : 22) : b.cx + dx;
+    const floor = Math.max(a.b, b.b) + (isNext ? 52 : 78);
+    const path = `M ${sx} ${a.b} C ${sx} ${floor}, ${ex} ${floor}, ${ex} ${b.b}`;
+    const midX = (sx + ex) / 2;
+    const midY = 0.75 * floor + 0.125 * (a.b + b.b);
+    const label = isNext
+      ? (e.isRing ? '↻ tail.next → head' : '↩ next cycle')
+      : (e.isRing ? 'head.prev → tail' : '← prev cycle');
+    items.push(
+      <g key={`c${i}`}>
+        <path d={path} fill="none" stroke={color} strokeWidth="5" opacity="0.14" />
+        <path d={path} fill="none" stroke={color} strokeWidth="2" strokeDasharray="6 3"
+          markerEnd="url(#ll-cycle)" className="cycle-arc-flowing" opacity="0.95" />
+        <rect x={midX - 52} y={midY - 9} width={104} height={17} rx={5}
+          fill={labelBg} stroke={color} strokeWidth="0.9" opacity="0.97" />
+        <text x={midX} y={midY + 3.5} textAnchor="middle" fill={color}
+          fontSize="9" fontWeight="700" fontFamily="'JetBrains Mono', monospace">
+          {label}
+        </text>
+      </g>
+    );
+  });
+
+  extraEdges.forEach((e, i) => {
+    const a = layout[e.fromId];
+    const b = layout[e.toId];
+    if (!a || !b) return;
+    const isNext = e.kind === 'next';
+    const color = isNext ? '#38bdf8' : '#818cf8';
+    // offset past the NULL badge that sits centred under a tail node
+    const off = isNext ? 34 : -34;
+    let path;
+    let lx; let ly;
+    if (Math.abs(b.cy - a.cy) < 24) {
+      // same row: side to side, or loop underneath when the target is behind
+      if (b.cx > a.cx) {
+        const y = a.cy + off * 0.5;
+        path = `M ${a.r} ${y} L ${b.l} ${y}`;
+        lx = (a.r + b.l) / 2; ly = y - 6;
+      } else {
+        const floor = Math.max(a.b, b.b) + 34;
+        path = `M ${a.cx + off} ${a.b} C ${a.cx + off} ${floor}, ${b.cx + off} ${floor}, ${b.cx + off} ${b.b}`;
+        lx = (a.cx + b.cx) / 2 + off; ly = 0.75 * floor + 0.25 * a.b;
+      }
+    } else if (b.cy < a.cy) {
+      // target above (unlinked lane → chain): leave the top, arrive at the bottom
+      const sx = a.cx + off;
+      const ex = b.cx + off;
+      path = `M ${sx} ${a.t} C ${sx} ${a.t - 46}, ${ex} ${b.b + 46}, ${ex} ${b.b}`;
+      lx = (sx + ex) / 2; ly = (a.t + b.b) / 2;
+    } else {
+      // target below (chain → unlinked lane)
+      const sx = a.cx + off;
+      const ex = b.cx + off;
+      path = `M ${sx} ${a.b} C ${sx} ${a.b + 46}, ${ex} ${b.t - 46}, ${ex} ${b.t}`;
+      lx = (sx + ex) / 2; ly = (a.b + b.t) / 2;
+    }
+    items.push(
+      <g key={`x${i}`}>
+        <path d={path} fill="none" stroke={color} strokeWidth="2" strokeDasharray={e.dangling ? '5 4' : undefined}
+          markerEnd={isNext ? 'url(#ll-next-h)' : 'url(#ll-prev-h)'} opacity="0.95" />
+        <text x={lx + (isNext ? 8 : -8)} y={ly} textAnchor={isNext ? 'start' : 'end'} fill={color}
+          fontSize="9" fontWeight="800" fontFamily="'JetBrains Mono', monospace">
+          {isNext ? 'next' : 'prev'}
+        </text>
+      </g>
+    );
+  });
 
   return (
     <svg
       style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: maxBottom,
-        overflow: 'visible',
-        pointerEvents: 'none',
-        zIndex: 4,
+        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+        overflow: 'visible', pointerEvents: 'none', zIndex: 4,
       }}
       aria-hidden="true"
     >
-      {arcs.map((arc, i) => {
-        const { fx, fy, tx, ty, arcFloor, pointerType } = arc;
-        // Cubic bezier: both control points dive to arcFloor
-        const path = `M ${fx} ${fy} C ${fx} ${arcFloor}, ${tx} ${arcFloor}, ${tx} ${ty}`;
-        const midX = (fx + tx) / 2;
-        const labelY = arcFloor + 14;
-        const color = pointerType === 'prev' ? '#818cf8' : '#f97316';
-        const label = pointerType === 'prev' ? '← PREV CYCLE' : '↩ NEXT CYCLE';
-
-        return (
-          <g key={i}>
-            {/* Glow shadow */}
-            <path
-              d={path}
-              fill="none"
-              stroke={color}
-              strokeWidth="5"
-              opacity="0.15"
-            />
-            {/* Main arc line */}
-            <path
-              d={path}
-              fill="none"
-              stroke={color}
-              strokeWidth="2"
-              strokeDasharray="6 3"
-              markerEnd="url(#ll-cycle)"
-              className="cycle-arc-flowing"
-              opacity="0.9"
-            />
-            {/* Cycle label badge */}
-            <rect
-              x={midX - 38}
-              y={labelY - 9}
-              width={76}
-              height={16}
-              rx={4}
-              fill="rgba(249,115,22,0.12)"
-              stroke={color}
-              strokeWidth="0.8"
-              opacity="0.9"
-            />
-            <text
-              x={midX}
-              y={labelY + 3}
-              textAnchor="middle"
-              fill={color}
-              fontSize="8.5"
-              fontWeight="700"
-              fontFamily="'JetBrains Mono', monospace"
-              letterSpacing="0.04em"
-            >
-              {label}
-            </text>
-          </g>
-        );
-      })}
+      {items}
     </svg>
   );
 }
@@ -934,7 +1232,7 @@ function CycleArcOverlay({ arcs }) {
 /* ══════════════════════════════════════════════════════
    NodeCard — FIX-2: Clear Address Display
    ══════════════════════════════════════════════════════ */
-function NodeCard({
+function NodeCardImpl({
   node,
   index,
   isActive,
@@ -944,6 +1242,8 @@ function NodeCard({
   showAddresses,
   addrMap,
   nodeById,
+  detached = false,   // exists but is not linked into the list
+  removed = false,    // became unreachable in this very step (one-step ghost)
   theme = 'dark',
 }) {
   const pal = PALETTE[theme] || PALETTE.dark;
@@ -961,15 +1261,21 @@ function NodeCard({
   const prevLinkBroken = isDoubly && prevAddr && prevNode && prevNode.nextId !== node.id;
 
   const colors = getNodeColors(isActive, type, theme);
+  // Unlinked / removed nodes keep the same card anatomy but are visibly "outside" the list
+  const stateColor = removed ? (theme === 'light' ? '#b91c1c' : '#f87171')
+                   : detached ? (theme === 'light' ? '#a16207' : '#fbbf24') : null;
+  const borderColor = stateColor && !isActive ? stateColor : colors.border;
 
   return (
     <div
       className={isActive ? 'pulse-active' : ''}
+      title={removed ? 'Unreachable after this step — will be garbage collected' : detached ? 'Not reachable from head' : undefined}
       style={{
         display: 'flex', flexDirection: 'column',
         borderRadius: 12,
         background: pal.cardBg,
-        border: `2px solid ${colors.border}`,
+        border: `2px ${stateColor ? 'dashed' : 'solid'} ${borderColor}`,
+        opacity: removed ? 0.6 : 1,
         boxShadow: isActive
           ? `0 0 0 4px ${colors.glow}, 0 8px 32px ${colors.shadow}`
           : isFlashing
@@ -1019,7 +1325,7 @@ function NodeCard({
           color: isActive ? colors.label : pal.idxBadgeText,
           padding: '0px 5px', borderRadius: 3, fontSize: 9,
         }}>
-          [{index}]
+          {removed ? 'REMOVED' : detached ? 'UNLINKED' : `[${index}]`}
         </span>
       </div>
 
@@ -1074,7 +1380,7 @@ function NodeCard({
             fontSize: 19, fontWeight: 800, color: colors.val,
             fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.1,
           }}>
-            {String(node.val)}
+            <span style={removed ? { textDecoration: 'line-through' } : undefined}>{String(node.val)}</span>
           </span>
         </div>
 
@@ -1112,6 +1418,28 @@ function NodeCard({
     </div>
   );
 }
+
+/* Re-render a card only when something it actually draws changed. Trace steps
+   hand us brand-new node objects every time, so reference equality is useless;
+   compare the fields that reach the DOM (incl. the neighbour back-links used
+   by the DLL integrity check). */
+const NodeCard = memo(NodeCardImpl, (a, b) => {
+  if (a.index !== b.index || a.isActive !== b.isActive || a.isFlashing !== b.isFlashing
+    || a.type !== b.type || a.isDoubly !== b.isDoubly || a.showAddresses !== b.showAddresses
+    || a.theme !== b.theme || a.detached !== b.detached || a.removed !== b.removed) return false;
+  const p = a.node, q = b.node;
+  if (p.id !== q.id || p.val !== q.val || p.nextId !== q.nextId || p.prevId !== q.prevId) return false;
+  if (a.addrMap.get(p.id) !== b.addrMap.get(q.id)
+    || a.addrMap.get(p.nextId) !== b.addrMap.get(q.nextId)
+    || a.addrMap.get(p.prevId) !== b.addrMap.get(q.prevId)) return false;
+  if (a.isDoubly) {
+    const an = a.nodeById?.get(p.nextId), bn = b.nodeById?.get(q.nextId);
+    const ap = a.nodeById?.get(p.prevId), bp = b.nodeById?.get(q.prevId);
+    if ((an && an.prevId) !== (bn && bn.prevId) || (ap && ap.nextId) !== (bp && bp.nextId)
+      || Boolean(an) !== Boolean(bn) || Boolean(ap) !== Boolean(bp)) return false;
+  }
+  return true;
+});
 
 /* ══════════════════════════════════════════════════════
    FIX-1 + FIX-2: Connector Arrows — stable IDs, address labels
@@ -1166,7 +1494,7 @@ function SinglyHArrow({ isActive, type, isReversed = false, targetAddr = null, t
 }
 
 // Doubly bidirectional arrows with stable IDs + optional address label
-function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, prevAddr = null, theme = 'dark' }) {
+function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, prevAddr = null, prevOk = true, theme = 'dark' }) {
   const pal = PALETTE[theme] || PALETTE.dark;
   const nextMarkerId = isActive ? 'url(#ll-next-h-active)' : 'url(#ll-next-h)';
   const prevMarkerId = isActive ? 'url(#ll-prev-h-active)' : 'url(#ll-prev-h)';
@@ -1193,14 +1521,23 @@ function DoublyHArrow({ isActive, type, _isReversed = false, targetAddr = null, 
         </span>
       )}
 
-      {/* Prev Arrow (Violet) — right to left */}
+      {/* Prev Arrow (Violet) — right to left. Drawn only when B.prev really is A;
+          otherwise a red dashed stub with no head shows the back-link is missing. */}
       <svg width={svgW} height="12" viewBox={`0 0 ${svgW} 12`}>
-        <line
-          x1="40" y1="6" x2="6" y2="6"
-          stroke={prevColor} strokeWidth="2"
-          className={isActive ? 'arrow-flowing' : ''}
-          markerEnd={prevMarkerId}
-        />
+        {prevOk ? (
+          <line
+            x1="40" y1="6" x2="6" y2="6"
+            stroke={prevColor} strokeWidth="2"
+            className={isActive ? 'arrow-flowing' : ''}
+            markerEnd={prevMarkerId}
+          />
+        ) : (
+          <g>
+            <title>prev pointer does not point back at the previous node</title>
+            <line x1="40" y1="6" x2="14" y2="6" stroke="#ef4444" strokeWidth="2" strokeDasharray="3 3" />
+            <text x="8" y="9.5" fontSize="10" fontWeight="800" fill="#ef4444">✕</text>
+          </g>
+        )}
       </svg>
 
       {/* Next Arrow (Cyan) — left to right */}
@@ -1349,7 +1686,7 @@ function getNodeColors(isActive, type, theme = 'dark') {
 /* ══════════════════════════════════════════════════════
    Empty State Visual
    ══════════════════════════════════════════════════════ */
-function EmptyHint({ isDoubly, theme = 'dark' }) {
+function EmptyHint({ isDoubly, circular = false, theme = 'dark' }) {
   const pal = PALETTE[theme] || PALETTE.dark;
   return (
     <div style={{
@@ -1370,11 +1707,11 @@ function EmptyHint({ isDoubly, theme = 'dark' }) {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         boxShadow: theme === 'light' ? '0 8px 24px rgba(15,23,42,0.08)' : '0 8px 30px rgba(0,0,0,0.4)',
       }}>
-        {isDoubly ? '⇄' : '⛓'}
+        {circular ? '↻' : isDoubly ? '⇄' : '⛓'}
       </div>
       <div>
         <h3 style={{ fontSize: 16, fontWeight: 700, color: pal.text, margin: '0 0 6px' }}>
-          {isDoubly ? 'Doubly Linked List Visualizer' : 'Linked List Visualizer'}
+          {circular ? 'Circular Linked List Visualizer' : isDoubly ? 'Doubly Linked List Visualizer' : 'Linked List Visualizer'}
         </h3>
         <p style={{ fontSize: 13, color: pal.textMuted, margin: 0, lineHeight: 1.6 }}>
           Run your code with a <code style={{ color: theme === 'light' ? '#0e7490' : '#38bdf8', background: theme === 'light' ? 'rgba(14,116,144,0.1)' : 'rgba(56, 189, 248, 0.1)', padding: '2px 6px', borderRadius: 4 }}>Node</code> class to see the live pointer chain animate step-by-step.

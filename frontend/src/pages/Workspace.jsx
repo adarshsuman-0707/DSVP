@@ -1722,6 +1722,7 @@ export default function Workspace() {
           allEvents={events}
           currentStep={stepIndex}
           resetKey={runResetKey}
+          runError={errorMessage}
           theme={theme}
         />
 
@@ -1748,6 +1749,7 @@ export default function Workspace() {
         onPlayPause={() => setIsPlaying(p => !p)}
         onStep={delta => setStepIndex(i => Math.min(Math.max(i + delta, 0), events.length - 1))}
         onScrub={step  => setStepIndex(step - 1)}
+        onReset={() => { setIsPlaying(false); setStepIndex(0); }}
         onSpeedChange={setSpeed}
         displayStep={displayStep}
         displayTotal={displayTotal}
@@ -1897,7 +1899,7 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
   );
 }
 
-function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey, theme = 'dark' }) {
+function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey, runError = '', theme = 'dark' }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <PanelLabel theme={theme}>Visualization</PanelLabel>
@@ -1909,6 +1911,7 @@ function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, c
           totalSteps={totalSteps}
           allEvents={allEvents}
           currentStep={currentStep + 1}
+          runError={runError}
           theme={theme}
         />
       </div>

@@ -118,7 +118,9 @@ export function RichStat({ icon, label, value, accent = '#2E74B5', sub, T = DEFA
    CreatedAt timestamps in the user's saved-code history.
    ════════════════════════════════════════════════════════════ */
 const DAY_MS = 86400000;
-function toKey(d) { return d.toISOString().slice(0, 10); }
+// Local-calendar-day key (UTC keys shift days for non-UTC users, e.g. IST).
+const localKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+function toKey(d) { return localKey(d); }
 
 /**
  * Years that have at least one snippet, plus the current year (so the
@@ -171,9 +173,20 @@ export function ActivityHeatmap({ history, T = DEFAULT_T, year }) {
 
     const monthLabels = [];
     let lastMonth = -1;
+    let lastIndex = -10;
     weeks.forEach((w, i) => {
-      const m = w[0].date.getMonth();
-      if (m !== lastMonth) { monthLabels.push({ index: i, label: w[0].date.toLocaleDateString('en-US', { month: 'short' }) }); lastMonth = m; }
+      // Padding days before Jan 1 belong to last year's Dec — label the week by
+      // its first in-year day so "Dec" doesn't collide with "Jan".
+      const ref = (year ? w.find(d => d.date.getFullYear() === year) : w[0]) || w[0];
+      const m = ref.date.getMonth();
+      if (m !== lastMonth) {
+        lastMonth = m;
+        // a label is ~3 cells wide; skip it if it would overlap the previous one
+        if (i - lastIndex >= 3) {
+          monthLabels.push({ index: i, label: ref.date.toLocaleDateString('en-US', { month: 'short' }) });
+          lastIndex = i;
+        }
+      }
     });
 
     const maxCount = Math.max(1, ...Object.values(counts));
@@ -481,7 +494,7 @@ export function StreakRiskAlert({ currentStreak, T = DEFAULT_T, onPractice }) {
    ════════════════════════════════════════════════════════════ */
 const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function keyOf(d) { return d.toISOString().slice(0, 10); }
+function keyOf(d) { return localKey(d); }
 
 export function StreakCalendar({ history, currentStreak, longestStreak, T = DEFAULT_T, onAction }) {
   const today = useMemo(() => { const t = new Date(); t.setHours(0, 0, 0, 0); return t; }, []);

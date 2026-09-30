@@ -6,6 +6,7 @@ async function getWallet(req, res, next) {
   try {
     const wallet = await CoinModel.getWallet(req.user.userId);
     const activeUnlocks = await CoinModel.getActiveModuleUnlocks(req.user.userId);
+    console.log('wallet', wallet);
     res.json({
       coinsUnlocked: !!wallet.CoinsUnlocked,
       coinBalance: wallet.CoinBalance,

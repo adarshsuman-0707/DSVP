@@ -4,6 +4,10 @@ const ARRAY_OPS = new Set(['init', 'write', 'read', 'swap', 'append', 'compare',
 const ARRAY2D_OPS = new Set(['init2d', 'read2d', 'write2d']);
 const EXEC_OPS = new Set(['call', 'line', 'return']);
 const LL_OPS = new Set(['ll_snap', 'll_init', 'll_update', 'll_insert', 'll_delete', 'll_traverse']);
+// Every linked-list flavour shares the same trace shape (ll_snap + pointer
+// map), so they all get the same compaction — previously only the singly
+// 'linked-list' slug did, leaving doubly/circular runs full of noise steps.
+const LL_SLUGS = new Set(['linked-list', 'doubly-linked-list', 'circular-linked-list', 'circular-doubly-linked-list']);
 const BST_OPS = new Set(['bst_snap', 'bst_init', 'bst_update', 'bst_insert', 'bst_delete', 'bst_traverse']);
 // AVL reuses the exact same raw bst_snap trace events emitted by
 // BSTInstrumentVisitor (an AVL node has the same left/right/value shape as
@@ -18,7 +22,7 @@ const HASH_OPS = new Set(['hash_init', 'hash_put', 'hash_get', 'hash_remove', 'h
 function buildTraceEvents({ language, rawTrace, moduleSlug, userOutput }) {
   if (!rawTrace || !Array.isArray(rawTrace.steps)) return [];
   const events = normalizeAll(rawTrace.steps, userOutput || '', moduleSlug);
-  if (moduleSlug === 'linked-list') {
+  if (LL_SLUGS.has(moduleSlug)) {
     return compactLLEvents(events, LL_OPS);
   }
   if (moduleSlug === 'bst') {
@@ -67,7 +71,16 @@ function compactLLEvents(events, OPS) {
     // Filter duplicate consecutive LL/BST events that don't alter state or active node
     if (OPS.has(e.type)) {
       const prev = compacted[compacted.length - 1];
-      if (prev && OPS.has(prev.type)) {
+      if (prev && OPS.has(prev.type) && e.llKind && prev.llKind) {
+        // Pointer-aware events: every one is a distinct execution step, so
+        // only a byte-identical repeat (same state, pointers, kind, line and
+        // text) is noise. Keep the FIRST of a repeat — never the later one.
+        const identical = prev.llKind === e.llKind && prev.currentLine === e.currentLine &&
+          prev.description === e.description &&
+          JSON.stringify(prev.linkedListState) === JSON.stringify(e.linkedListState) &&
+          JSON.stringify(prev.llPtrs) === JSON.stringify(e.llPtrs);
+        if (identical) continue;
+      } else if (prev && OPS.has(prev.type)) {
         const sameActive = (prev.activeNodeId === e.activeNodeId) && (prev.activeTreeNodeId === e.activeTreeNodeId);
         const sameNodes = JSON.stringify(prev.linkedListState) === JSON.stringify(e.linkedListState) &&
           JSON.stringify(prev.treeState) === JSON.stringify(e.treeState);
@@ -133,6 +146,7 @@ function normalizeAll(steps, userOutput, moduleSlug) {
     arraysByVar: new Map(),
     lastGrid2D: [],   // most recent 2D array snapshot
     lastLLSnap: [],   // most recent linked-list snapshot
+    lastLLMeta: null, // pointer map / head / tail / ring of that snapshot (sticky across call/return/line events)
     lastBSTSnap: [],   // most recent tree snapshot
     lastGraphState: { nodes: [], edges: [], visited: [], frontier: [] },
     lastHashState: { buckets: [], size: 0 },
@@ -162,6 +176,7 @@ function normalizeAll(steps, userOutput, moduleSlug) {
     if (LL_OPS.has(op)) {
       const evt = buildLLEvt(s, stepNo, op, ctx, userOutput);
       ctx.lastLLSnap = evt.linkedListState;
+      ctx.lastLLMeta = { llPtrs: evt.llPtrs, llHeadId: evt.llHeadId, llTailId: evt.llTailId, llRing: evt.llRing };
       events.push(evt);
       continue;
     }
@@ -202,6 +217,11 @@ function normalizeAll(steps, userOutput, moduleSlug) {
 
   return events;
 }
+
+const ARRAY_EVENT_TYPE = {
+  init: 'CREATE_ARRAY', write: 'ASSIGN', read: 'ACCESS', swap: 'SWAP',
+  compare: 'COMPARE', append: 'INSERT', delete: 'DELETE',
+};
 
 /* ── Array event builder ──────────────────────────────────────────────── */
 function buildArrayEvt(s, stepNo, op, ctx, userOutput) {
@@ -254,6 +274,24 @@ function buildArrayEvt(s, stepNo, op, ctx, userOutput) {
       description = `Step ${stepNo}`;
   }
 
+  // Normalized, language-independent event (ASSIGN / ACCESS / SWAP ...) plus
+  // the value the slot held BEFORE this op, taken from this variable's own
+  // previous snapshot so the UI can animate old -> new deterministically.
+  const prevSnap = ctx.arraysByVar.get(varName)?.state ?? [];
+  const oldValue = (op === 'write' && activeIndex !== null && activeIndex < prevSnap.length)
+    ? prevSnap[activeIndex] : null;
+  const arrayEvent = {
+    type: ARRAY_EVENT_TYPE[op] || 'ACCESS',
+    variable: label,
+    index: activeIndex ?? undefined,
+    secondIndex: secondIndex ?? undefined,
+    oldValue: oldValue ?? undefined,
+    newValue: op === 'write' ? value : undefined,
+    value: op === 'read' ? value : undefined,
+    length: snap.length,
+    lineNumber: ctx.lineNo ?? undefined,
+  };
+
   // Update this variable's own slot — every other tracked array keeps
   // whatever it last had, so multiple arrays coexist instead of one
   // overwriting the others' display.
@@ -261,11 +299,125 @@ function buildArrayEvt(s, stepNo, op, ctx, userOutput) {
     name: varName, state: snap, activeIndex, secondIndex, type: op,
   });
 
-  return base(stepNo, op, 'array', description, ctx, userOutput, {
+  const extra = {
     arrayState: snap, activeIndex, secondIndex, value,
     arrays: Array.from(ctx.arraysByVar.values()),
     activeArrayVar: varName,
-  });
+    arrayName: label, oldValue, arrayEvent,
+  };
+  if (ctx.moduleSlug === 'stack' || ctx.moduleSlug === 'queue') {
+    extra.sqEvent = buildStackQueueEvent(s, stepNo, op, snap, prevSnap, ctx);
+    extra.sqState = extra.sqEvent.newState;
+  }
+  return base(stepNo, op, 'array', description, ctx, userOutput, extra);
+}
+
+/* ── Stack / Queue normalized events ──────────────────────────────────── */
+// Conceptual event model layered on the raw array ops. Does not replace the
+// existing array event (the current visualizers still consume it); it adds
+// op semantics (PUSH/POP/PEEK/…), typed values and stable element ids.
+const SQ_TYPE = {
+  stack: { init: 'CREATE', append: 'PUSH', delete: 'POP', read: 'PEEK', write: 'UPDATE' },
+  queue: { init: 'CREATE', append: 'ENQUEUE', delete: 'DEQUEUE', read: 'FRONT', write: 'UPDATE' },
+};
+
+/** { value, type, displayValue } — keeps the semantic type, never coerces to number. */
+function typedValue(v) {
+  if (v === null || v === undefined) return { value: null, type: 'null', displayValue: 'null' };
+  if (typeof v === 'boolean') return { value: v, type: 'boolean', displayValue: String(v) };
+  if (typeof v === 'number') {
+    return { value: v, type: Number.isInteger(v) ? 'int' : 'double', displayValue: String(v) };
+  }
+  if (typeof v === 'string') {
+    return { value: v, type: v.length === 1 ? 'char' : 'string', displayValue: v.length === 1 ? `'${v}'` : JSON.stringify(v) };
+  }
+  if (Array.isArray(v)) return { value: v, type: 'array', displayValue: JSON.stringify(v) };
+  return { value: v, type: 'object', displayValue: JSON.stringify(v) };
+}
+
+function buildStackQueueEvent(s, stepNo, op, snap, prevSnap, ctx) {
+  const kind = ctx.moduleSlug;
+  const sq = ctx.sq || (ctx.sq = { seq: 0, ids: [], lastSize: 0 });
+
+  // Keep a stable id per element: new elements get a fresh id, removed ones
+  // drop theirs, so React keys / animations never depend on array position.
+  const removedIdx = op === 'delete'
+    ? (kind === 'queue' ? 0 : Math.max(0, prevSnap.length - 1))
+    : -1;
+  if (op === 'init') { sq.ids = []; sq.seq = 0; }
+  if (op === 'delete' && sq.ids.length) sq.ids.splice(Math.min(removedIdx, sq.ids.length - 1), 1);
+  while (sq.ids.length < snap.length) sq.ids.push(`${kind[0]}${++sq.seq}`);
+  if (sq.ids.length > snap.length) sq.ids.length = snap.length;
+
+  const elements = snap.map((v, i) => ({ id: sq.ids[i], ...typedValue(v) }));
+  const newState = kind === 'stack'
+    ? { kind, elements, size: snap.length, top: snap.length ? sq.ids[snap.length - 1] : null }
+    : { kind, elements, size: snap.length, front: snap.length ? sq.ids[0] : null, rear: snap.length ? sq.ids[snap.length - 1] : null };
+
+  const tv = s.val !== undefined && s.val !== null && op !== 'init' ? tryParseScalar(s.val, snap, prevSnap, op, kind) : null;
+  const evt = {
+    step: stepNo,
+    type: SQ_TYPE[kind][op] || 'ACCESS',
+    structure: kind,
+    value: tv ? tv.value : undefined,
+    valueType: tv ? tv.type : undefined,
+    displayValue: tv ? tv.displayValue : undefined,
+    elementId: op === 'append' ? sq.ids[snap.length - 1] : undefined,
+    variable: s.var || undefined,
+    oldState: { size: prevSnap.length },
+    newState,
+    lineNumber: ctx.lineNo ?? undefined,
+    // The stack/queue itself changes only on PUSH/POP/ENQUEUE/DEQUEUE/CREATE.
+    mutates: op === 'append' || op === 'delete' || op === 'init' || op === 'write',
+  };
+  return evt;
+}
+
+// Raw trace stringifies `val`; recover the real scalar type from the
+// snapshot where possible (append → last elem, delete → element removed).
+function tryParseScalar(rawVal, snap, prevSnap, op, kind) {
+  let v;
+  if (op === 'append') v = snap[snap.length - 1];
+  else if (op === 'delete') v = prevSnap[kind === 'queue' ? 0 : prevSnap.length - 1];
+  else if (op === 'read') v = snap[kind === 'queue' ? 0 : snap.length - 1];
+  else v = rawVal;
+  return typedValue(v === undefined ? rawVal : v);
+}
+
+/**
+ * Turns a runtime failure on a Stack/Queue module into an explicit
+ * UNDERFLOW / OVERFLOW event so the UI stops at the failing operation
+ * instead of showing a generic error. Returns null if the failure is not a
+ * recognizable stack/queue condition.
+ */
+function buildFailureEvent({ moduleSlug, errorMessage, lastEvent }) {
+  if (moduleSlug !== 'stack' && moduleSlug !== 'queue') return null;
+  const msg = String(errorMessage || '');
+  const isUnder = /EmptyStackException|NoSuchElementException|pop from (an )?empty|IndexError|underflow|is empty/i.test(msg);
+  const isOver = /overflow|is full|queue full|stack full/i.test(msg);
+  if (!isUnder && !isOver) return null;
+  const structure = moduleSlug;
+  const op = isOver ? (structure === 'stack' ? 'PUSH' : 'ENQUEUE') : (structure === 'stack' ? 'POP' : 'DEQUEUE');
+  const type = isOver ? 'OVERFLOW' : 'UNDERFLOW';
+  const reason = isOver ? `${structure === 'stack' ? 'Stack' : 'Queue'} is full.` : `${structure === 'stack' ? 'Stack' : 'Queue'} is empty.`;
+  const last = lastEvent || {};
+  const state = last.sqState || { kind: structure, elements: [], size: 0 };
+  return {
+    step: (last.step || 0) + 1,
+    type: 'error',
+    description: `${type}: ${op} rejected — ${reason}`,
+    arrayState: last.arrayState ?? [],
+    activeIndex: null,
+    currentLine: last.currentLine ?? null,
+    locals: last.locals ?? null,
+    sqState: state,
+    sqEvent: {
+      step: (last.step || 0) + 1, type, structure, operation: op, reason,
+      newState: state, oldState: state, mutates: false,
+      rawError: String(errorMessage || '').split(/\r?\n/)[0].slice(0, 200),
+    },
+    userOutput: last.userOutput ?? '',
+  };
 }
 
 /* ── 2D Array event builder ───────────────────────────────────────────── */
@@ -291,8 +443,21 @@ function buildArray2DEvt(s, stepNo, op, ctx, userOutput) {
       description = `Step ${stepNo}`;
   }
 
+  const prev = ctx.lastGrid2D || [];
+  const oldValue = (op === 'write2d' && activeRow !== null && activeCol !== null)
+    ? (prev[activeRow]?.[activeCol] ?? null) : null;
+  const arrayEvent = {
+    type: op === 'init2d' ? 'CREATE_ARRAY' : op === 'write2d' ? 'ASSIGN' : 'ACCESS',
+    row: activeRow ?? undefined, column: activeCol ?? undefined,
+    oldValue: oldValue ?? undefined,
+    newValue: op === 'write2d' ? value : undefined,
+    value: op === 'read2d' ? value : undefined,
+    rows: grid.length, cols: grid[0]?.length ?? 0,
+    lineNumber: ctx.lineNo ?? undefined,
+  };
+
   return base(stepNo, op, 'array2d', description, ctx, userOutput, {
-    grid2dState: grid, activeRow, activeCol, value,
+    grid2dState: grid, activeRow, activeCol, value, oldValue, arrayEvent,
   });
 }
 
@@ -358,7 +523,10 @@ function buildHashEvt(s, stepNo, op, ctx, userOutput) {
 
 /* ── Linked-List event builder ────────────────────────────────────────── */
 function buildLLEvt(s, stepNo, op, ctx, userOutput) {
-  // nodes: [{id, val, nextId, prevId?, isHead, isTail?}, ...]
+  // nodes: [{id, val, nextId, prevId?, isHead, detached?}, ...]
+  //   - chain nodes first (index 0 is the head), then `detached` nodes that
+  //     exist but are not linked into the list (freshly created, or spliced
+  //     out but still referenced by a pointer variable / a stale next/prev).
   // prevId is present for doubly linked lists — pass it through as-is
   const nodes = Array.isArray(s.nodes) ? s.nodes : [...(ctx.lastLLSnap || [])];
   const activeId = (s.activeId !== undefined && s.activeId !== null) ? s.activeId : -1;
@@ -369,11 +537,25 @@ function buildLLEvt(s, stepNo, op, ctx, userOutput) {
     ? s.isDoubly
     : nodes.some(n => n.prevId !== undefined && n.prevId !== null && n.prevId !== -1);
 
-  return base(stepNo, op, 'linkedList', desc, ctx, userOutput, {
+  const overrides = {
     linkedListState: nodes,
     activeNodeId: activeId,
     isDoubly,
-  });
+    // Pointer-aware extras (Java instrumenter). Absent for legacy producers,
+    // in which case the frontend falls back to its snapshot-only behaviour.
+    llKind: typeof s.kind === 'string' ? s.kind : null,
+    llPtrs: s.ptrs && typeof s.ptrs === 'object' ? s.ptrs : null,
+    llHeadId: s.headId ?? null,
+    llTailId: s.tailId ?? null,
+    llRing: typeof s.ring === 'boolean' ? s.ring : null,
+  };
+  // The instrumenter knows the exact source line of the statement that just
+  // ran — more precise than "last line event seen", which lags around loops.
+  if (Number.isInteger(s.line) && s.line > 0) {
+    overrides.currentLine = s.line;
+    ctx.lineNo = s.line;
+  }
+  return base(stepNo, op, 'linkedList', desc, ctx, userOutput, overrides);
 }
 
 function opToLLDesc(op, nodes, activeId) {
@@ -753,6 +935,11 @@ function base(stepNo, type, category, description, ctx, userOutput, overrides) {
     // linked-list panel defaults (overridden by ll events)
     linkedListState: [...(ctx.lastLLSnap || [])],
     activeNodeId: -1,
+    llKind: null,
+    llPtrs: ctx.lastLLMeta?.llPtrs ?? null,
+    llHeadId: ctx.lastLLMeta?.llHeadId ?? null,
+    llTailId: ctx.lastLLMeta?.llTailId ?? null,
+    llRing: ctx.lastLLMeta?.llRing ?? null,
     // tree panel defaults (overridden by bst events)
     treeState: [...(ctx.lastBSTSnap || [])],
     activeTreeNodeId: -1,
@@ -794,4 +981,4 @@ function parseArgs(raw) {
   try { return JSON.parse(raw); } catch (_) { return {}; }
 }
 
-module.exports = { buildTraceEvents };
+module.exports = { buildTraceEvents, buildFailureEvent, typedValue };

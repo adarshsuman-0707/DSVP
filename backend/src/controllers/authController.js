@@ -95,6 +95,7 @@ async function login(req, res, next) {
         PremiumModulesAccess: user.PremiumModulesAccess ? JSON.parse(user.PremiumModulesAccess) : [],
         CoinsUnlocked: !!user.CoinsUnlocked,
         CoinBalance: coinBalance,
+        CreatedAt: user.CreatedAt,
       },
       token,
     });

@@ -12,8 +12,10 @@ const PLAN_RANK = { free: 0, basic: 1, premium: 2 };
  * equivalent — a temporary (7-day) grant a user bought with coins instead
  * of upgrading their plan — neither replaces the plan check.
  */
-function hasModuleAccess({ userRole, userPlan, premiumAccess, coinUnlockedIds, module }) {
-  if (userRole === 'admin') return true;
+function hasModuleAccess({ userPlan, premiumAccess, coinUnlockedIds, module }) {
+  // No admin bypass: admins are gated by their own plan like anyone else, so
+  // plan changes can be verified from an admin login. Module management
+  // lives in the admin panel, not the catalog.
   const requiredPlan = module.RequiredPlan || 'free';
   const byPlan = (PLAN_RANK[userPlan] ?? 0) >= (PLAN_RANK[requiredPlan] ?? 0);
   const byGrant = premiumAccess.includes(module.ModuleId);

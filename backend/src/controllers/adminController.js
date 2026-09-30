@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { sql, getPool } = require('../config/db');
 const UserModel        = require('../models/userModel');
 const PaymentModel     = require('../models/paymentModel');
+const CoinModel        = require('../models/coinModel');
 const FeedbackModel    = require('../models/feedbackModel');
 const AuditLogModel    = require('../models/auditLogModel');
 const jwt = require('jsonwebtoken');
@@ -162,6 +163,25 @@ async function updateUserRole(req, res, next) {
   } catch (err) { next(err); }
 }
 
+/**
+ * Coins follow the plan: a paid plan unlocks the wallet, dropping to free
+ * locks it again and wipes balance, history and coin-bought module unlocks.
+ */
+async function syncCoinsWithPlan(userId, plan) {
+  if (plan !== 'free') {
+    await CoinModel.unlock(userId);
+    return;
+  }
+  const pool = await getPool();
+  await pool.request().input('UserId', sql.Int, userId).query(`
+    BEGIN TRAN;
+      DELETE FROM dbo.CoinModuleUnlocks WHERE UserId = @UserId;
+      DELETE FROM dbo.CoinTransactions  WHERE UserId = @UserId;
+      UPDATE dbo.Users SET CoinsUnlocked = 0, CoinBalance = 0 WHERE UserId = @UserId;
+    COMMIT;
+  `);
+}
+
 // PATCH /api/admin/users/:id/premium  body: { isPremium: true|false }
 async function updateUserPremium(req, res, next) {
   try {
@@ -179,9 +199,11 @@ async function updateUserPremium(req, res, next) {
         SET IsPremium = @IsPremium,
             SubscriptionPlan = @SubscriptionPlan,
             SubscriptionExpiry = @SubscriptionExpiry,
+            PremiumModulesAccess = NULL,
             UpdatedAt = SYSUTCDATETIME()
         WHERE UserId = @UserId
       `);
+    await syncCoinsWithPlan(+id, isPremium ? 'premium' : 'free');
 
     await logAudit(req, { action: 'USER_UPDATED', targetType: 'user', targetId: +id, description: `Premium set to ${!!isPremium}` });
     res.json({ message: 'Premium status updated' });
@@ -217,6 +239,7 @@ async function updateUserSubscription(req, res, next) {
             UpdatedAt = SYSUTCDATETIME()
         WHERE UserId = @UserId
       `);
+    await syncCoinsWithPlan(+id, plan);
 
     await logAudit(req, { action: 'USER_UPDATED', targetType: 'user', targetId: +id, description: `Subscription set to ${plan}` });
     res.json({ message: 'Subscription updated', plan, expiresAt: expiryDate, moduleAccess });
@@ -334,8 +357,12 @@ async function getUserDetail(req, res, next) {
         return r.execute('sp_GetActivityPaged');
       })(),
       pool.request().input('UserId', sql.Int, userId).query(`
-        SELECT ProgressId, ModuleId, ProblemId, Status, CompletionPct, LastAccessedAt
-        FROM dbo.UserProgress WHERE UserId=@UserId ORDER BY LastAccessedAt DESC
+        SELECT up.ProgressId, up.ModuleId, m.Name AS ModuleName, up.ProblemId, p.Title AS ProblemTitle,
+               up.Status, up.CompletionPct, up.LastAccessedAt
+        FROM dbo.UserProgress up
+        LEFT JOIN dbo.Modules  m ON m.ModuleId  = up.ModuleId
+        LEFT JOIN dbo.Problems p ON p.ProblemId = up.ProblemId
+        WHERE up.UserId=@UserId ORDER BY up.LastAccessedAt DESC
       `),
       pool.request().input('UserId', sql.Int, userId).query(`
         SELECT DISTINCT m.ModuleId, m.Name, m.Slug, m.Category

@@ -110,7 +110,7 @@ export function THead({ cols }) {
         {cols.map(c => (
           <th key={c} style={{
             padding: '10px 20px', textAlign: 'left', fontSize: 11,
-            fontWeight: 700, color: T.mode === 'dark' ? T.text : T.textMuted, textTransform: 'uppercase',
+            fontWeight: 700, color: T.text, textTransform: 'uppercase',
             letterSpacing: '.06em', borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap',
           }}>{c}</th>
         ))}

@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  derivePointers, groupPointersByIndex, namesHolding, parseBoundsError,
+  VariablesPanel, BoundsErrorBanner, DebugPanel, VizKeyframes,
+} from './arrayViz/arrayViz';
 
 /**
  * ArrayVisualizer — Enhanced
@@ -19,6 +23,11 @@ export default function ArrayVisualizer({
   name         = null, // optional: variable name, shown when multiple arrays coexist
   locals       = null, // { varName: value, ... } — every live local at this step, used to
                         // surface ALL loop pointers (not just the current op's 1-2 indices)
+  oldValue     = null, // value the active slot held before a 'write' (old -> new animation)
+  arrayEvent   = null, // normalized event (ASSIGN / ACCESS / ...) from the trace normalizer
+  runError     = '',
+  isLastStep   = false,
+  event        = null,
   theme        = 'dark',
 }) {
   const [flashSet, setFlashSet]           = useState(new Set());
@@ -67,6 +76,21 @@ export default function ArrayVisualizer({
   // running two, three, or more pointers (i, j, k, left, right, slow, fast…)
   // all stay visible with their live values, not just the last op's pair.
   const pointers = derivePointers(locals, arrayState.length, name);
+
+  // Educational overlays - all derived from the current event only, so
+  // Next / Previous / Reset stay deterministic.
+  const label      = name || 'arr';
+  const idxNames   = namesHolding(locals, activeIndex, name);
+  const idxExpr    = idxNames[0] ?? activeIndex;
+  const inRange    = activeIndex !== null && activeIndex >= 0 && activeIndex < arrayState.length;
+  const boundsErr  = isLastStep ? parseBoundsError(runError) : null;
+  const access = [];
+  if (inRange && (type === 'read' || type === 'write')) {
+    if (idxNames.length) access.push({ label: `${label}[${idxExpr}]`, value: `${label}[${activeIndex}]` });
+    access.push({ label: `${label}[${activeIndex}]`, value: String(arrayState[activeIndex]), color: opColor.icon });
+  }
+  if (arrayState.length > 0) access.push({ label: `${label}.length`, value: String(arrayState.length) });
+  const showOld = type === 'write' && inRange && oldValue !== null && String(oldValue) !== String(arrayState[activeIndex]);
 
   return (
     <div
@@ -139,6 +163,8 @@ export default function ArrayVisualizer({
             type={type}
             maxVal={maxVal}
             pointers={pointers}
+            showOld={showOld}
+            oldValue={oldValue}
             theme={theme}
           />
         ) : (
@@ -149,10 +175,23 @@ export default function ArrayVisualizer({
             flashSet={flashSet}
             type={type}
             pointers={pointers}
+            showOld={showOld}
+            oldValue={oldValue}
             theme={theme}
           />
         )}
       </div>
+
+      <VizKeyframes />
+      {boundsErr && (
+        <BoundsErrorBanner error={boundsErr} name={label}
+          validRange={arrayState.length ? `0 - ${arrayState.length - 1}` : 'none (empty array)'} theme={theme} />
+      )}
+
+      {/* ── access / assignment / comparison strip ── */}
+      <AccessStrip type={type} label={label} idxExpr={idxExpr} activeIndex={activeIndex}
+        secondIndex={secondIndex} arrayState={arrayState} oldValue={oldValue} showOld={showOld}
+        opColor={opColor} theme={theme} />
 
       {/* ── description bar ── */}
       {description && (
@@ -178,6 +217,9 @@ export default function ArrayVisualizer({
         </div>
       )}
 
+      {totalSteps > 0 && <VariablesPanel locals={locals} access={access} exclude={[name]} theme={theme} />}
+      <DebugPanel event={event} arrayEvent={arrayEvent} theme={theme} />
+
       {/* ── stdout ── */}
       {userOutput && (
         <>
@@ -200,7 +242,7 @@ export default function ArrayVisualizer({
    BAR VIEW — vertical bar chart, animated heights
    All rows (pointer, bars, index) in ONE scrollable div
    ══════════════════════════════════════════════════════ */
-function BarView({ arrayState, activeIndex, secondIndex, flashSet, type, maxVal, pointers = [], theme = 'dark' }) {
+function BarView({ arrayState, activeIndex, secondIndex, flashSet, type, maxVal, pointers = [], showOld = false, oldValue = null, theme = 'dark' }) {
   const BAR_W = 52;   // fixed width per bar — always consistent, user scrolls for large arrays
   const GAP   = 4;
   const MAX_H = 200;
@@ -294,7 +336,7 @@ function BarView({ arrayState, activeIndex, secondIndex, flashSet, type, maxVal,
                   transition: 'color 300ms',
                   opacity: isA || isB ? 1 : 0.65,
                   lineHeight: 1,
-                }}>{val}</span>
+                }}>{isA && showOld ? <><s style={{ opacity: .55 }}>{String(oldValue)}</s>→{val}</> : val}</span>
 
                 {/* Bar */}
                 <div style={{
@@ -340,7 +382,7 @@ function BarView({ arrayState, activeIndex, secondIndex, flashSet, type, maxVal,
 /* ══════════════════════════════════════════════════════
    CELL VIEW — classic horizontal boxes
    ══════════════════════════════════════════════════════ */
-function CellView({ arrayState, activeIndex, secondIndex, flashSet, type, pointers = [], theme = 'dark' }) {
+function CellView({ arrayState, activeIndex, secondIndex, flashSet, type, pointers = [], showOld = false, oldValue = null, theme = 'dark' }) {
   const pal = PALETTE[theme] || PALETTE.dark;
   const opColors = getOpColors(theme);
   const pointersByIndex = groupPointersByIndex(pointers);
@@ -402,7 +444,7 @@ function CellView({ arrayState, activeIndex, secondIndex, flashSet, type, pointe
             : String(val);
 
           return (
-            <div key={i} style={{
+            <div key={`cell-${i}`} style={{
               minWidth: 56, height: 56, flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 18, fontWeight: 700,
@@ -418,7 +460,19 @@ function CellView({ arrayState, activeIndex, secondIndex, flashSet, type, pointe
               transition: 'background 300ms, border-color 300ms, color 300ms, transform 250ms cubic-bezier(.34,1.56,.64,1), box-shadow 300ms',
               zIndex: isFlash ? 2 : 1, position: 'relative',
               cursor: 'default',
-            }}>{displayVal}</div>
+            }}>
+              {isA && showOld && (
+                <span className="dsvp-anim" aria-label={`old value ${oldValue}`} style={{
+                  position: 'absolute', top: 2, left: 0, right: 0, textAlign: 'center',
+                  fontSize: 10, fontWeight: 600, textDecoration: 'line-through',
+                  animation: 'dsvpOldOut 450ms ease-out forwards', opacity: .55,
+                }}>{String(oldValue)}</span>
+              )}
+              <span className={isA && showOld ? 'dsvp-anim' : undefined}
+                style={isA && showOld ? { animation: 'dsvpNewIn 350ms cubic-bezier(.34,1.56,.64,1)', marginTop: 8 } : undefined}>
+                {displayVal}
+              </span>
+            </div>
           );
         })}
       </div>
@@ -436,42 +490,6 @@ function CellView({ arrayState, activeIndex, secondIndex, flashSet, type, pointe
       </div>
     </div>
   );
-}
-
-/* ── Multi-pointer helpers ─────────────────────────────────────────────
-   `locals` is the full set of live variables at this step (from the trace
-   event). Any integer whose value falls inside the array's valid index
-   range is treated as a pointer into it — covers i/j/k, left/right,
-   slow/fast, or whatever names the user's own code uses, with no limit
-   on how many can be shown at once. ─────────────────────────────────── */
-const POINTER_COLORS = ['#60a5fa', '#F2A93B', '#e879f9', '#4CAF50', '#fb7185', '#38bdf8', '#facc15', '#a78bfa'];
-
-// Python's instrumenter reports every local as a repr() STRING (e.g. "5"),
-// while Java's reports raw JSON numbers — accept both, reject anything that
-// isn't a clean integer (lists, objects, "Node(5)", etc.).
-function asIndexValue(v) {
-  if (typeof v === 'number' && Number.isInteger(v)) return v;
-  if (typeof v === 'string' && /^-?\d+$/.test(v.trim())) return parseInt(v, 10);
-  return null;
-}
-
-function derivePointers(locals, length, arrayName) {
-  if (!locals || typeof locals !== 'object' || length === 0) return [];
-  const entries = Object.keys(locals)
-    .filter(k => k !== arrayName)
-    .map(k => ({ name: k, index: asIndexValue(locals[k]) }))
-    .filter(p => p.index !== null && p.index >= 0 && p.index < length)
-    .sort((a, b) => a.name.localeCompare(b.name)); // stable order → stable colors across steps
-  return entries.map((p, i) => ({ ...p, color: POINTER_COLORS[i % POINTER_COLORS.length] }));
-}
-
-function groupPointersByIndex(pointers) {
-  const map = new Map();
-  for (const p of pointers) {
-    if (!map.has(p.index)) map.set(p.index, []);
-    map.get(p.index).push(p);
-  }
-  return map;
 }
 
 /* ── Theme palette (self-contained — no cross-file imports) ────────────── */
@@ -529,6 +547,35 @@ function getCellColor(isA, isB, type, theme = 'dark') {
   if (isB) return opColors.swap;
   const pal = PALETTE[theme] || PALETTE.dark;
   return { bg: pal.cellBg, border: pal.cellBorder, text: pal.text, glow: 'transparent', shadow: 'transparent' };
+}
+
+/* ── AccessStrip - states exactly what this step did, in code terms ───── */
+function AccessStrip({ type, label, idxExpr, activeIndex, secondIndex, arrayState, oldValue, showOld, opColor, theme }) {
+  if (activeIndex === null || activeIndex === undefined) return null;
+  const pal = PALETTE[theme] || PALETTE.dark;
+  const v = arrayState[activeIndex];
+  let body = null;
+  if (type === 'read' && activeIndex < arrayState.length) {
+    body = <>{label}[{idxExpr}]{idxExpr !== activeIndex && <> → {label}[{activeIndex}]</>} → <b>{String(v)}</b></>;
+  } else if (type === 'write' && activeIndex < arrayState.length) {
+    body = <>{label}[{idxExpr}]{idxExpr !== activeIndex && <> (index {activeIndex})</>}: {showOld ? <><s style={{ opacity: .6 }}>{String(oldValue)}</s> → </> : null}<b>{String(v)}</b></>;
+  } else if ((type === 'compare' || type === 'swap') && secondIndex !== null && secondIndex !== undefined) {
+    const a = arrayState[activeIndex], b = arrayState[secondIndex];
+    if (type === 'compare') {
+      const rel = a > b ? '>' : a < b ? '<' : '=';
+      body = <>{label}[{activeIndex}]={String(a)} <b>{rel}</b> {label}[{secondIndex}]={String(b)} <span style={{ opacity: .7 }}>({a > b ? 'out of order' : a === b ? 'equal' : 'in order'})</span></>;
+    } else {
+      body = <>swap {label}[{activeIndex}] ↔ {label}[{secondIndex}] : now {String(a)} and {String(b)}</>;
+    }
+  }
+  if (!body) return null;
+  return (
+    <div aria-live="polite" style={{
+      margin: '8px 20px 0', padding: '6px 12px', borderRadius: 8, flexShrink: 0,
+      border: `1px solid ${opColor.border}`, background: opColor.descBg, color: pal.text,
+      fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5,
+    }}>{body}</div>
+  );
 }
 
 /* ── TypeBadge ──────────────────────────────────────────────────────── */

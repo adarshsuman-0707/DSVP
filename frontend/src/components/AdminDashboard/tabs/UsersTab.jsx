@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  getAdminUsers, getAdminUserSummary, updateUserRole, updateUserPremium, updateUserStatus,
+  getMe, getAdminUsers, getAdminUserSummary, updateUserRole, updateUserSubscription, updateUserStatus,
   resetUserPassword, deleteAdminUser,
 } from '../../../services/api';
 import {
@@ -10,6 +10,7 @@ import {
   ActionMenu, ConfirmModal, useToasts, ToastStack, fmtDate, fmtDateTime,
 } from '../ui';
 import { useTheme } from '../../../context/ThemeContext';
+import { useAuth } from '../../../context/AuthContext';
 
 const ROLE_OPTIONS   = [['', 'All roles'], ['user', 'User'], ['admin', 'Admin']];
 const STATUS_OPTIONS = [['', 'All status'], ['active', 'Active'], ['inactive', 'Inactive'], ['blocked', 'Blocked']];
@@ -19,6 +20,7 @@ const BLANK_FILTERS = { search: '', role: '', status: '', plan: '', joinedFrom: 
 
 export default function UsersTab() {
   const { T } = useTheme();
+  const { user: me, updateUser: updateMe } = useAuth();
   const navigate = useNavigate();
   const [users,    setUsers]    = useState([]);
   const [summary,  setSummary]  = useState(null);
@@ -71,13 +73,13 @@ export default function UsersTab() {
     } catch { push('error', 'Failed to update role.'); }
   }
 
-  async function handlePremiumToggle(user) {
-    const newVal = !user.IsPremium;
+  async function handlePlanChange(user, plan) {
     try {
-      await updateUserPremium(user.UserId, newVal);
-      updateRow(user.UserId, { IsPremium: newVal });
-      push('success', newVal ? 'Premium granted.' : 'Premium revoked.');
-    } catch { push('error', 'Failed to update premium.'); }
+      await updateUserSubscription(user.UserId, plan);
+      if (user.UserId === me?.UserId) getMe().then(res => updateMe(res.data.user)).catch(() => {});
+      updateRow(user.UserId, { IsPremium: plan !== 'free', SubscriptionPlan: plan });
+      push('success', `Plan set to ${plan}.`);
+    } catch { push('error', 'Failed to update plan.'); }
   }
 
   async function handleStatusChange(user, status) {
@@ -201,7 +203,9 @@ export default function UsersTab() {
                       <ActionMenu items={[
                         { label: 'View Details', icon: '👁', onClick: () => navigate(`/admin/users/${u.UserId}`) },
                         { label: u.Role === 'admin' ? 'Revoke Admin' : 'Make Admin', icon: '🛡', onClick: () => handleRoleToggle(u) },
-                        { label: u.IsPremium ? 'Revoke Premium' : 'Grant Premium', icon: '⭐', onClick: () => handlePremiumToggle(u) },
+                        ...['free', 'basic', 'premium']
+                          .filter(p => p !== (u.SubscriptionPlan || 'free'))
+                          .map(p => ({ label: `Set plan: ${p[0].toUpperCase()}${p.slice(1)}`, icon: '⭐', onClick: () => handlePlanChange(u, p) })),
                         null,
                         u.Status !== 'active'   && { label: 'Activate User',   icon: '🟢', onClick: () => openConfirm('activate', u) },
                         u.Status !== 'inactive' && { label: 'Deactivate User', icon: '🟡', onClick: () => openConfirm('deactivate', u) },

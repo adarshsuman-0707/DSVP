@@ -16,6 +16,7 @@ export default function PlaybackBar({
   onPlayPause,
   onStep,
   onScrub,
+  onReset,
   onSpeedChange,
   displayStep,
   displayTotal,
@@ -36,6 +37,15 @@ export default function PlaybackBar({
         fontFamily: "'Inter', system-ui, sans-serif",
       }}
     >
+      {/* reset to the first step */}
+      {onReset && (
+        <CtrlBtn
+          onClick={onReset}
+          disabled={currentStep <= 1 && !isPlaying}
+          label="Reset to first step"
+        >⟲</CtrlBtn>
+      )}
+
       {/* step back */}
       <CtrlBtn
         onClick={() => onStep(-1)}

@@ -2,13 +2,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import AppShell from '../common/AppShell';
 import {
-  getAdminUserDetail, updateUserRole, updateUserPremium, updateUserStatus, resetUserPassword,
+  getMe, getAdminUserDetail, updateUserRole, updateUserSubscription, updateUserStatus, resetUserPassword,
 } from '../../services/api';
 import {
   PageHeader, Card, Btn, Badge, THead, TRow, TD, Avatar,
   Spinner, ErrorBanner, EmptyState, fmtDate, fmtDateTime, fmtRupee,
 } from './ui';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 const TABS = ['Overview', 'Activity', 'Progress', 'Modules', 'Submissions', 'Payments', 'Feedback'];
 
 export default function UserDetailPage() {
@@ -21,7 +22,8 @@ export default function UserDetailPage() {
   const [tab,     setTab]     = useState(() => TABS.includes(searchParams.get('tab')) ? searchParams.get('tab') : 'Overview');
   const [busy,    setBusy]    = useState(false);
   const { T } = useTheme();
-  const load = useCallback(() => {
+  const { user: me, updateUser: updateMe } = useAuth();
+  const load =useCallback(() => {
     setLoading(true); setError('');
     getAdminUserDetail(id)
       .then(r => setData(r.data))
@@ -41,13 +43,24 @@ export default function UserDetailPage() {
     setBusy(false);
   }
 
-  async function handlePremiumToggle() {
+  async function handlePlanChange(plan) {
     setBusy(true);
     try {
-      const newVal = !data.user.IsPremium;
-      await updateUserPremium(data.user.UserId, newVal);
-      setData(d => ({ ...d, user: { ...d.user, IsPremium: newVal } }));
-    } catch { setError('Failed to update premium.'); }
+      const r = await updateUserSubscription(data.user.UserId, plan);
+      // Admin edited their own account: refresh the session user so the
+      // sidebar badge / coin pill update without a reload.
+      if (data.user.UserId === me?.UserId) getMe().then(res => updateMe(res.data.user)).catch(() => {});
+      setData(d => ({
+        ...d,
+        user: {
+          ...d.user,
+          IsPremium: plan !== 'free',
+          SubscriptionPlan: plan,
+          SubscriptionExpiry: r.data.expiresAt || null,
+          UpdatedAt: new Date().toISOString(),
+        },
+      }));
+    } catch { setError('Failed to update plan.'); }
     setBusy(false);
   }
 
@@ -86,9 +99,15 @@ export default function UserDetailPage() {
                   <Btn size="sm" variant="ghost" disabled={busy} onClick={handleRoleToggle}>
                     {data.user.Role === 'admin' ? '↓ Make User' : '↑ Make Admin'}
                   </Btn>
-                  <Btn size="sm" variant={data.user.IsPremium ? 'ghost' : 'accent'} disabled={busy} onClick={handlePremiumToggle}>
-                    {data.user.IsPremium ? 'Revoke Premium' : 'Grant Premium'}
-                  </Btn>
+                  {['free', 'basic', 'premium'].map(p => {
+                    const current = (data.user.SubscriptionPlan || 'free') === p;
+                    return (
+                      <Btn key={p} size="sm" variant={current ? 'accent' : 'ghost'} disabled={busy || (current && p === 'free')}
+                        title={current ? 'Click to renew for 30 days' : undefined} onClick={() => handlePlanChange(p)}>
+                        {p[0].toUpperCase() + p.slice(1)}
+                      </Btn>
+                    );
+                  })}
                   {data.user.Status !== 'active' && <Btn size="sm" variant="success" disabled={busy} onClick={() => handleStatus('active')}>Activate</Btn>}
                   {data.user.Status !== 'inactive' && <Btn size="sm" variant="ghost" disabled={busy} onClick={() => handleStatus('inactive')}>Deactivate</Btn>}
                   {data.user.Status !== 'blocked' && <Btn size="sm" variant="danger" disabled={busy} onClick={() => handleStatus('blocked')}>Block</Btn>}
@@ -190,8 +209,8 @@ function ProgressPane({ rows }) {
               <tr><td colSpan={5}><EmptyState icon="📈" title="No progress recorded" subtitle="This user hasn't started tracked problems yet." /></td></tr>
             ) : rows.map(p => (
               <TRow key={p.ProgressId}>
-                <TD>#{p.ModuleId}</TD>
-                <TD>{p.ProblemId ?? '—'}</TD>
+                <TD style={{ fontWeight: 600 }}>{p.ModuleName || `#${p.ModuleId}`}</TD>
+                <TD>{p.ProblemTitle || '—'}</TD>
                 <TD><Badge variant={p.Status === 'completed' ? 'success' : 'default'}>{p.Status}</Badge></TD>
                 <TD>{p.CompletionPct}%</TD>
                 <TD style={{ color: '#94a3b8' }}>{fmtDateTime(p.LastAccessedAt)}</TD>
@@ -232,15 +251,20 @@ function SubmissionsPane({ rows }) {
     <Card>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <THead cols={['Module', 'Language', 'Status', 'When']} />
+          <THead cols={['Module', 'Language', 'Status', 'Error / Log', 'When']} />
           <tbody>
             {(!rows || rows.length === 0) ? (
-              <tr><td colSpan={4}><EmptyState icon="📝" title="No submissions yet" /></td></tr>
+              <tr><td colSpan={5}><EmptyState icon="📝" title="No submissions yet" /></td></tr>
             ) : rows.map(s => (
               <TRow key={s.TraceId}>
                 <TD>{s.ModuleName || '—'}</TD>
                 <TD><Badge variant="default">{s.Language}</Badge></TD>
-                <TD><Badge variant={s.Status === 'success' ? 'success' : 'failed'}>{s.Status}</Badge></TD>
+                <TD><Badge variant={s.Status === 'success' ? 'success' : 'failed'}>{s.Status === 'success' ? 'Success' : s.Status === 'compile_error' ? 'Compile error' : 'Runtime error'}</Badge></TD>
+                <TD style={{ maxWidth: 420 }}>
+                  {s.ErrorMessage
+                    ? <pre title={s.ErrorMessage} style={{ margin: 0, fontSize: 11, fontFamily: 'monospace', color: '#dc2626', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 90, overflow: 'auto' }}>{s.ErrorMessage}</pre>
+                    : '—'}
+                </TD>
                 <TD style={{ color: '#94a3b8' }}>{fmtDateTime(s.CreatedAt)}</TD>
               </TRow>
             ))}

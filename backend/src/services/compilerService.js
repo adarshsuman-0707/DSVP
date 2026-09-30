@@ -35,7 +35,11 @@ const INSTRUMENTER_JAVA_JAR = path.join(__dirname, 'tools', 'dsvp-java-instrumen
 const execFileAsync = promisify(execFile);
 const execAsync     = promisify(exec);
 
-const TIMEOUT_MS = 12_000;   // max execution time per run
+const {
+  LIMITS, SUPPORTED_LANGUAGES, execOptions, sanitizeForClient,
+} = require('./executionGuard');
+
+const TIMEOUT_MS = LIMITS.timeoutMs;   // max execution time per run
 
 /* ── Shims (C / C++ / C#) ───────────────────────────────────────────── */
 /* Python uses python_instrumenter.py for full AST-based auto-tracing.   */
@@ -191,7 +195,8 @@ async function runPython(code) {
 
   // Write ONLY the user's raw code — no shim prepended.
   // The instrumenter script handles all AST transformation at runtime.
-  const tmpFile = path.join(os.tmpdir(), `dsvp_user_${Date.now()}.py`);
+  const tmpDirPy = fs.mkdtempSync(path.join(os.tmpdir(), 'dsvp_py_'));
+  const tmpFile  = path.join(tmpDirPy, 'user_code.py');
   fs.writeFileSync(tmpFile, code, 'utf8');
 
   try {
@@ -199,14 +204,14 @@ async function runPython(code) {
     const { stdout, stderr } = await execFileAsync(
       pythonBin,
       [INSTRUMENTER_PY, tmpFile],
-      { timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }
+      execOptions(tmpDirPy)
     );
     // Trace goes to stderr, user output is clean stdout — same split as Java.
     return buildSuccessJava(stdout, stderr);
   } catch (err) {
     return buildError(err, 'python');
   } finally {
-    safeUnlink(tmpFile);
+    safeRmDir(tmpDirPy);
   }
 }
 
@@ -221,7 +226,7 @@ async function runJava(code) {
   if (!fs.existsSync(INSTRUMENTER_JAVA_JAR)) {
     return {
       status: 'compile_error',
-      errorMessage: `Java AST instrumenter jar not found at ${INSTRUMENTER_JAVA_JAR}. Please rebuild the instrumenter.`,
+      errorMessage: 'Java instrumenter is not available on this server. Please contact the administrator.',
       rawOutput: '',
       trace: { steps: [], userOutput: '' }
     };
@@ -238,14 +243,14 @@ async function runJava(code) {
     const { stdout } = await execFileAsync(
       java,
       ['-jar', INSTRUMENTER_JAVA_JAR, userSrcFile],
-      { timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, cwd: tmpDir }
+      execOptions(tmpDir, { maxBuffer: 4 * 1024 * 1024 })
     );
     instrumented = stdout;
   } catch (err) {
     safeRmDir(tmpDir);
     return {
       status: 'compile_error',
-      errorMessage: (err.stderr || err.message || 'Instrumentation failed').trim(),
+      errorMessage: sanitizeForClient((err.stderr || err.message || 'Instrumentation failed').trim()),
       rawOutput: '',
       trace: { steps: [], userOutput: '' }
     };
@@ -262,14 +267,14 @@ async function runJava(code) {
     // platform default charset — which on Windows is commonly a non-UTF-8
     // codepage — causing spurious "unmappable character" compile errors
     // that have nothing to do with the user's actual code.
-    await execFileAsync(javac, ['-encoding', 'UTF-8', srcFile], { timeout: TIMEOUT_MS, cwd: tmpDir });
+    await execFileAsync(javac, ['-encoding', 'UTF-8', srcFile], execOptions(tmpDir));
     
     // Run the compiled code
     // NOTE: DSVP_TRACE lines go to stderr, user println goes to stdout
     const { stdout, stderr } = await execFileAsync(
       java,
-      ['-cp', tmpDir, 'Main'],
-      { timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, cwd: tmpDir }
+      [`-Xmx${LIMITS.maxJavaHeapMb}m`, '-Xss4m', '-cp', tmpDir, 'Main'],
+      execOptions(tmpDir)
     );
     
     return buildSuccessJava(stdout, stderr);
@@ -292,10 +297,8 @@ async function runC(code) {
   fs.writeFileSync(srcFile, fullCode, 'utf8');
 
   try {
-    await execFileAsync(gcc, [srcFile, '-o', outFile, '-lm'], { timeout: TIMEOUT_MS, cwd: tmpDir });
-    const { stdout, stderr } = await execFileAsync(outFile, [], {
-      timeout: TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024,
-    });
+    await execFileAsync(gcc, [srcFile, '-o', outFile, '-lm'], execOptions(tmpDir));
+    const { stdout, stderr } = await execFileAsync(outFile, [], execOptions(tmpDir));
     return buildSuccess(stdout, stderr);
   } catch (err) {
     return buildError(err, 'c');
@@ -315,10 +318,8 @@ async function runCpp(code) {
   fs.writeFileSync(srcFile, fullCode, 'utf8');
 
   try {
-    await execFileAsync(gpp, [srcFile, '-o', outFile, '-std=c++17'], { timeout: TIMEOUT_MS, cwd: tmpDir });
-    const { stdout, stderr } = await execFileAsync(outFile, [], {
-      timeout: TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024,
-    });
+    await execFileAsync(gpp, [srcFile, '-o', outFile, '-std=c++17'], execOptions(tmpDir));
+    const { stdout, stderr } = await execFileAsync(outFile, [], execOptions(tmpDir));
     return buildSuccess(stdout, stderr);
   } catch (err) {
     return buildError(err, 'cpp');
@@ -346,9 +347,8 @@ async function runCsharp(code) {
     fs.writeFileSync(srcFile, fullCode, 'utf8');
     fs.writeFileSync(csproj, `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net6.0</TargetFramework></PropertyGroup></Project>`, 'utf8');
     try {
-      const { stdout, stderr } = await execAsync(`dotnet run --project "${csproj}"`, {
-        timeout: TIMEOUT_MS * 2, maxBuffer: 2 * 1024 * 1024, cwd: tmpDir,
-      });
+      const { stdout, stderr } = await execFileAsync(dotnet, ['run', '--project', csproj],
+        execOptions(tmpDir, { timeout: TIMEOUT_MS * 2 }));
       return buildSuccess(stdout, stderr);
     } catch (err) {
       return buildError(err, 'csharp');
@@ -361,10 +361,8 @@ async function runCsharp(code) {
     const outFile = path.join(tmpDir, 'main.exe');
     fs.writeFileSync(srcFile, fullCode, 'utf8');
     try {
-      await execFileAsync('mcs', [srcFile, '-out:' + outFile], { timeout: TIMEOUT_MS, cwd: tmpDir });
-      const { stdout, stderr } = await execFileAsync('mono', [outFile], {
-        timeout: TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024,
-      });
+      await execFileAsync('mcs', [srcFile, '-out:' + outFile], execOptions(tmpDir));
+      const { stdout, stderr } = await execFileAsync('mono', [outFile], execOptions(tmpDir));
       return buildSuccess(stdout, stderr);
     } catch (err) {
       return buildError(err, 'csharp');
@@ -385,11 +383,11 @@ const RUNNERS = {
 };
 
 async function runCode({ language, code }) {
-  const runner = RUNNERS[language];
+  const runner = SUPPORTED_LANGUAGES.includes(language) ? RUNNERS[language] : null;
   if (!runner) {
     return {
       status:       'compile_error',
-      errorMessage: `Unsupported language: "${language}". Supported: python, java, c, cpp, csharp.`,
+      errorMessage: `Unsupported language. Supported: ${SUPPORTED_LANGUAGES.join(', ')}.`,
       rawOutput:    '',
       trace:        { steps: [], userOutput: '' },
     };
@@ -420,16 +418,24 @@ function buildSuccessJava(stdout, stderr) {
     status:       'success',
     errorMessage: null,
     rawOutput:    stdout,
-    trace:        { steps: traceData.steps, userOutput: userOut },
+    trace:        { steps: traceData.steps, userOutput: userOut, truncated: traceData.truncated },
   };
 }
 
 function buildError(err, language) {
   /* execFileAsync rejects with err.killed (timeout) or err.stderr (compile/runtime) */
-  if (err.killed || err.signal === 'SIGTERM') {
+  if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
     return {
       status:       'runtime_error',
-      errorMessage: 'Execution timed out (12 s limit). Check for infinite loops.',
+      errorMessage: 'Output limit exceeded. The program printed too much output and was stopped.',
+      rawOutput:    '',
+      trace:        parseTraceFromStdout(language === 'java' || language === 'python' ? (err.stderr || '') : (err.stdout || '')),
+    };
+  }
+  if (err.killed || err.signal === 'SIGTERM' || err.signal === 'SIGKILL') {
+    return {
+      status:       'runtime_error',
+      errorMessage: `Execution timed out (${Math.round(TIMEOUT_MS / 1000)} s limit). Check for infinite loops.`,
       rawOutput:    err.stdout || '',
       trace:        parseTraceFromStdout(err.stdout || ''),
     };
@@ -449,8 +455,8 @@ function buildError(err, language) {
 
   return {
     status:       isCompile ? 'compile_error' : 'runtime_error',
-    errorMessage: sanitizeError(stderr, language),
-    rawOutput:    stdout,
+    errorMessage: sanitizeForClient(sanitizeError(stderr, language)),
+    rawOutput:    sanitizeForClient(stdout),
     trace:        partial,
   };
 }
@@ -473,6 +479,12 @@ function isCompileError(stderr, language) {
 
 function sanitizeError(stderr, language) {
   if (!stderr) return 'An unknown error occurred.';
+
+  // Trace events share the stderr channel with real errors (Java/Python).
+  // Left in, a runtime exception ends up buried under — or cut off by the
+  // line limits below — hundreds of DSVP_TRACE lines.
+  stderr = stderr.split('\n').filter(l => !l.trim().startsWith('DSVP_TRACE:')).join('\n');
+  if (!stderr.trim()) return 'An unknown error occurred.';
   
   // For Java, keep more context and clean up paths more carefully
   if (language === 'java') {
@@ -507,10 +519,12 @@ function sanitizeError(stderr, language) {
 function parseTraceFromStdout(stdout) {
   const steps   = [];
   const outputs = [];
+  let truncated = false;
 
   for (const rawLine of stdout.split('\n')) {
     const line = rawLine.trim();
     if (line.startsWith('DSVP_TRACE:')) {
+      if (steps.length >= LIMITS.maxTraceSteps) { truncated = true; continue; }
       try {
         steps.push(JSON.parse(line.slice('DSVP_TRACE:'.length)));
       } catch (_) { /* malformed — skip */ }
@@ -519,7 +533,7 @@ function parseTraceFromStdout(stdout) {
     }
   }
 
-  return { steps, userOutput: outputs.join('\n') };
+  return { steps, userOutput: outputs.join('\n'), truncated };
 }
 
 function safeUnlink(f) {
