@@ -4,7 +4,7 @@ import CodeEditor from '../components/Editor/CodeEditor';
 import VisualizationCanvas from '../components/Visualization/VisualizationCanvas';
 import PlaybackBar from '../components/PlaybackBar/PlaybackBar';
 import { runCode, getModules } from '../services/api';
-import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory } from '../services/api';
+import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory, renameCodeHistory } from '../services/api';
 import { Modal, FormField, Input, Btn } from '../components/AdminDashboard/ui';
 import { useAuth } from '../context/AuthContext';
 
@@ -1470,6 +1470,17 @@ export default function Workspace() {
     }
   }
 
+  /* Rename code in history */
+  async function handleRenameCode(snippetId, newTitle) {
+    try {
+      await renameCodeHistory(snippetId, newTitle);
+      await loadHistory();
+    } catch (err) {
+      console.error('Failed to rename code:', err);
+      alert('Failed to rename. Please try again.');
+    }
+  }
+
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100vh',
@@ -1721,6 +1732,7 @@ export default function Workspace() {
             loading={loadingHistory}
             onLoad={handleLoadCode}
             onDelete={handleDeleteCode}
+            onRename={handleRenameCode}
             onClose={() => setHistoryOpen(false)}
             theme={theme}
           />
@@ -1963,10 +1975,36 @@ function SaveCodeModal({ open, onClose, onSave }) {
 }
 
 /* ── History Sidebar ── */
-function HistorySidebar({ history, loading, onLoad, onDelete, onClose, theme = 'dark' }) {
+function HistorySidebar({ history, loading, onLoad, onDelete, onRename, onClose, theme = 'dark' }) {
   const T = THEME[theme];
   const [copiedId, setCopiedId] = useState(null);
   const [loadingCopy, setLoadingCopy] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [savingRename, setSavingRename] = useState(false);
+
+  function startEdit(item) {
+    setEditingId(item.SnippetId);
+    setEditTitle(item.Title);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditTitle('');
+  }
+
+  async function commitEdit(snippetId) {
+    const trimmed = editTitle.trim();
+    if (!trimmed) return;
+    try {
+      setSavingRename(true);
+      await onRename(snippetId, trimmed);
+      setEditingId(null);
+      setEditTitle('');
+    } finally {
+      setSavingRename(false);
+    }
+  }
 
   async function handleCopy(snippet) {
     try {
@@ -2040,12 +2078,67 @@ function HistorySidebar({ history, loading, onLoad, onDelete, onClose, theme = '
               onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.08)'; }}
             >
               <div style={{ marginBottom: 8 }}>
-                <div style={{
-                  fontSize: 13, fontWeight: 600, color: '#e6edf3',
-                  marginBottom: 4, lineHeight: 1.4,
-                  overflow: 'hidden', textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}>{item.Title}</div>
+                {editingId === item.SnippetId ? (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                    <input
+                      autoFocus
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') commitEdit(item.SnippetId);
+                        if (e.key === 'Escape') cancelEdit();
+                      }}
+                      maxLength={200}
+                      style={{
+                        flex: 1, fontSize: 13, fontWeight: 600, color: '#e6edf3',
+                        background: '#0d1117', border: '1px solid rgba(46,116,181,.5)',
+                        borderRadius: 6, padding: '4px 8px', outline: 'none',
+                      }}
+                    />
+                    <button
+                      onClick={() => commitEdit(item.SnippetId)}
+                      disabled={savingRename || !editTitle.trim()}
+                      title="Save name"
+                      style={{
+                        width: 26, height: 26, borderRadius: 6, flexShrink: 0,
+                        background: 'rgba(76,175,80,.15)', border: '1px solid rgba(76,175,80,.35)',
+                        color: '#7ee787', cursor: savingRename ? 'wait' : 'pointer', fontSize: 12,
+                      }}
+                    >✓</button>
+                    <button
+                      onClick={cancelEdit}
+                      title="Cancel"
+                      style={{
+                        width: 26, height: 26, borderRadius: 6, flexShrink: 0,
+                        background: 'rgba(225,87,89,.15)', border: '1px solid rgba(225,87,89,.3)',
+                        color: '#f85149', cursor: 'pointer', fontSize: 12,
+                      }}
+                    >✕</button>
+                  </div>
+                ) : (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4,
+                  }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: 600, color: '#e6edf3',
+                      lineHeight: 1.4, flex: 1,
+                      overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>{item.Title}</div>
+                    <button
+                      onClick={() => startEdit(item)}
+                      title="Rename"
+                      style={{
+                        width: 22, height: 22, borderRadius: 5, flexShrink: 0,
+                        background: 'transparent', border: '1px solid rgba(255,255,255,.1)',
+                        color: '#8b949e', cursor: 'pointer', fontSize: 11,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#58a6ff'; e.currentTarget.style.borderColor = 'rgba(46,116,181,.5)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = '#8b949e'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.1)'; }}
+                    >✎</button>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <span style={{
                     fontSize: 10, padding: '2px 6px', borderRadius: 4,

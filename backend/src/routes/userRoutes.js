@@ -312,6 +312,40 @@ router.get('/code-history/:id', verifyToken, async (req, res, next) => {
   }
 });
 
+// PATCH /api/users/code-history/:id - Rename saved code
+router.patch('/code-history/:id', verifyToken, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { title } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ message: 'Title is required' });
+    }
+    if (title.length > 200) {
+      return res.status(400).json({ message: 'Title must be 200 characters or less' });
+    }
+
+    const pool = await getPool();
+    const result = await pool.request()
+      .input('SnippetId', sql.Int, id)
+      .input('UserId', sql.Int, req.user.userId)
+      .input('Title', sql.NVarChar(200), title.trim())
+      .query(`
+        UPDATE dbo.SavedSnippets
+        SET Title = @Title, UpdatedAt = SYSUTCDATETIME()
+        WHERE SnippetId = @SnippetId AND UserId = @UserId
+      `);
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ message: 'Code not found or access denied' });
+    }
+
+    res.json({ message: 'Renamed successfully', title: title.trim() });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/users/code-history/:id - Delete saved code
 router.delete('/code-history/:id', verifyToken, async (req, res, next) => {
   try {

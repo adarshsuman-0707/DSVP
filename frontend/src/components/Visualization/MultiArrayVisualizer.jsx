@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import ArrayVisualizer from './ArrayVisualizer';
 
 /**
@@ -9,6 +10,9 @@ import ArrayVisualizer from './ArrayVisualizer';
  * Falls back to a single, full-size ArrayVisualizer when there's 0 or 1
  * tracked array, so existing single-array code looks and behaves exactly
  * as before — this only changes anything once a second array shows up.
+ *
+ * Panels are stacked vertically with a drag handle between each pair so
+ * the user can resize how much height each array gets.
  */
 export default function MultiArrayVisualizer({
   arrays        = [],       // [{ name, state, activeIndex, secondIndex, type }, ...]
@@ -45,34 +49,120 @@ export default function MultiArrayVisualizer({
   const pal = PALETTE[theme] || PALETTE.dark;
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', height: '100%',
-      background: pal.bg, overflow: 'hidden',
-    }}>
+    <ResizableStack theme={theme} panelCount={arrays.length} panelKeys={arrays.map(a => a.name)}>
       {arrays.map((arr, i) => (
-        <div
-          key={arr.name}
-          style={{
-            flex: 1, minHeight: 0,
-            borderBottom: i < arrays.length - 1 ? `1px solid ${pal.hairline}` : 'none',
-            outline: arr.name === activeArrayVar ? `2px solid ${pal.outline}` : 'none',
-            outlineOffset: -2,
-            transition: 'outline 150ms',
-          }}
-        >
-          <ArrayVisualizer
-            name={arr.name}
-            arrayState={arr.state}
-            activeIndex={arr.activeIndex}
-            secondIndex={arr.secondIndex}
-            type={arr.name === activeArrayVar ? type : 'highlight'}
-            description={arr.name === activeArrayVar ? description : ''}
-            step={step}
-            totalSteps={totalSteps}
-            userOutput={i === arrays.length - 1 ? userOutput : ''}
-            locals={locals}
-            theme={theme}
-          />
+        <div key={arr.name} style={{ height: '100%', minHeight: 0 }}>
+          <div
+            style={{
+              height: '100%',
+              outline: arr.name === activeArrayVar ? `2px solid ${pal.outline}` : 'none',
+              outlineOffset: -2,
+              transition: 'outline 150ms',
+            }}
+          >
+            <ArrayVisualizer
+              name={arr.name}
+              arrayState={arr.state}
+              activeIndex={arr.activeIndex}
+              secondIndex={arr.secondIndex}
+              type={arr.name === activeArrayVar ? type : 'highlight'}
+              description={arr.name === activeArrayVar ? description : ''}
+              step={step}
+              totalSteps={totalSteps}
+              userOutput={i === arrays.length - 1 ? userOutput : ''}
+              locals={locals}
+              theme={theme}
+            />
+          </div>
+        </div>
+      ))}
+    </ResizableStack>
+  );
+}
+
+/* ── ResizableStack ───────────────────────────────────────────────────
+   Vertically stacks its children, each getting an equal share of height
+   by default, with a drag handle between adjacent panels that lets the
+   user redistribute height between just that pair. Ratios are tracked
+   in state (not DOM measurement) so resizing stays stable across steps
+   as array contents change. ─────────────────────────────────────────── */
+function ResizableStack({ children, theme = 'dark', panelCount, panelKeys }) {
+  const pal = PALETTE[theme] || PALETTE.dark;
+  const containerRef = useRef(null);
+  const dragRef = useRef(null); // { index, startY, startRatios, containerH }
+  const [ratios, setRatios] = useState(() => Array(panelCount).fill(1 / panelCount));
+  const [dragging, setDragging] = useState(false);
+  const keysSig = panelKeys.join('|');
+
+  // Re-init ratios (equal split) only when the *set* of panels changes —
+  // not on every re-render, so a manual resize survives step navigation.
+  const prevSigRef = useRef(keysSig);
+  useEffect(() => {
+    if (prevSigRef.current !== keysSig) {
+      prevSigRef.current = keysSig;
+      setRatios(Array(panelCount).fill(1 / panelCount));
+    }
+  }, [keysSig, panelCount]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e) => {
+      const d = dragRef.current;
+      if (!d || !containerRef.current) return;
+      const deltaRatio = (e.clientY - d.startY) / d.containerH;
+      const MIN = 0.08; // never collapse a panel below ~8% of stack height
+      let a = d.startRatios[d.index] + deltaRatio;
+      let b = d.startRatios[d.index + 1] - deltaRatio;
+      if (a < MIN) { b -= (MIN - a); a = MIN; }
+      if (b < MIN) { a -= (MIN - b); b = MIN; }
+      const next = [...d.startRatios];
+      next[d.index] = a;
+      next[d.index + 1] = b;
+      setRatios(next);
+    };
+    const onUp = () => setDragging(false);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [dragging]);
+
+  const startDrag = (index) => (e) => {
+    if (!containerRef.current) return;
+    dragRef.current = {
+      index,
+      startY: e.clientY,
+      startRatios: ratios,
+      containerH: containerRef.current.getBoundingClientRect().height,
+    };
+    setDragging(true);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        display: 'flex', flexDirection: 'column', height: '100%',
+        background: pal.bg, overflow: 'hidden',
+        userSelect: dragging ? 'none' : 'auto',
+      }}
+    >
+      {children.map((child, i) => (
+        <div key={panelKeys[i]} style={{ display: 'flex', flexDirection: 'column', flex: `${ratios[i]} 1 0`, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0 }}>{child}</div>
+          {i < children.length - 1 && (
+            <div
+              onMouseDown={startDrag(i)}
+              title="Drag to resize"
+              style={{
+                height: 6, flexShrink: 0, cursor: 'row-resize',
+                background: dragging && dragRef.current?.index === i ? pal.outline : pal.hairline,
+                transition: dragging ? 'none' : 'background 150ms',
+              }}
+            />
+          )}
         </div>
       ))}
     </div>

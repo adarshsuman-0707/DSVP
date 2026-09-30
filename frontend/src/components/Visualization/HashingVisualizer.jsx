@@ -60,6 +60,7 @@ const MODE_LABELS = {
   linear: 'Linear Probing',
   quadratic: 'Quadratic Probing',
   double: 'Double Hashing',
+  direct: 'Direct Addressing',
 };
 
 export default function HashingVisualizer({

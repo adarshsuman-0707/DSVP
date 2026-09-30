@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import MultiArrayVisualizer   from './MultiArrayVisualizer';
+import ArrayVisualizer        from './ArrayVisualizer';
 import Grid2DVisualizer       from './Grid2DVisualizer';
 import LinkedListVisualizer   from './LinkedListVisualizer';
 import StackVisualizer        from './StackVisualizer';
@@ -645,17 +645,22 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
             theme={theme}
           />
         ) : (
-          <MultiArrayVisualizer
-            arrays={lastArraysRef.current}
-            activeArrayVar={lastActiveArrayVarRef.current}
-            arrayState={lastArrStateRef.current}
-            activeIndex={lastArrActiveRef.current}
-            secondIndex={lastArrSecondRef.current}
-            type={lastArrTypeRef.current}
-            description={lastArrDescRef.current}
+          <ArrayVisualizer
+            // Read straight off the current event (same source as `locals`
+            // below) rather than the sticky ref, which only updates in a
+            // useEffect AFTER this render commits — mixing the two caused
+            // the pointer label (from `event.locals`, always fresh) to
+            // visibly move one frame before the highlighted bar (from the
+            // ref, one frame stale) caught up. arrayState is guaranteed on
+            // every event, so no ref fallback is needed here.
+            arrayState={event.arrayState  ?? lastArrStateRef.current}
+            activeIndex={event.activeIndex ?? null}
+            secondIndex={event.secondIndex ?? null}
+            type={event.type ?? 'highlight'}
+            description={isExecEvent(event.type) ? '' : (event.description ?? '')}
             step={event.step       ?? 0}
             totalSteps={totalSteps ?? 0}
-            userOutput={lastArrOutputRef.current}
+            userOutput={event.userOutput ?? ''}
             locals={event.locals   ?? null}
             theme={theme}
           />

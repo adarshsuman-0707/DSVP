@@ -92,6 +92,7 @@ export const saveCodeHistory = (payload) => api.post('/users/code-history/save',
 export const getCodeHistory = (params = {}) => api.get('/users/code-history', { params });
 export const loadCodeHistory = (id) => api.get(`/users/code-history/${id}`);
 export const deleteCodeHistory = (id) => api.delete(`/users/code-history/${id}`);
+export const renameCodeHistory = (id, title) => api.patch(`/users/code-history/${id}`, { title });
 
 // -------- Admin — Overview --------
 export const getAdminDashboard  = ()            => api.get('/admin/dashboard');

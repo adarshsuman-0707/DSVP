@@ -91,6 +91,12 @@ export default function Pricing() {
 
       const order = orderRes.data;
 
+      if (typeof window.Razorpay !== 'function') {
+        setError('Payment gateway failed to load. Check your internet connection or disable any ad-blocker, then try again.');
+        setLoading(null);
+        return;
+      }
+
       // Razorpay options
       const options = {
         key: import.meta.env.VITE_RAZORPAY_KEY || 'rzp_test_dummy',
@@ -137,7 +143,11 @@ export default function Pricing() {
       razorpay.open();
       
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to initiate payment');
+      const backendMsg = err.response?.data?.message;
+      const fallback = err.request
+        ? 'Could not reach the server. Please check your connection and try again.'
+        : 'Failed to initiate payment';
+      setError(backendMsg || fallback);
     } finally {
       setLoading(null);
     }
