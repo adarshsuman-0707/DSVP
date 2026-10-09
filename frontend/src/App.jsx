@@ -1,28 +1,30 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/common/ProtectedRoute';
+import RouteSplash from './components/common/RouteSplash';
 import Landing from './pages/Landing';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import Workspace from './pages/Workspace';
-import Pricing from './pages/Pricing';
-import Profile from './pages/Profile';
-import ModuleCatalog from './components/ModuleCatalog/ModuleCatalog';
-import AdminDashboard from './components/AdminDashboard/AdminDashboard';
-import UserDetailPage from './components/AdminDashboard/UserDetailPage';
-import PaymentHistory from './pages/PaymentHistory';
-import SavedSnippets from './pages/SavedSnippets';
-import ResetPasswordPage from './pages/ResetPasswordPage';
-import Coins from './pages/Coins';
-import Reports from './pages/Reports';
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const Workspace = lazy(() => import('./pages/Workspace'));
+const Pricing = lazy(() => import('./pages/Pricing'));
+const Profile = lazy(() => import('./pages/Profile'));
+const ModuleCatalog = lazy(() => import('./components/ModuleCatalog/ModuleCatalog'));
+const AdminDashboard = lazy(() => import('./components/AdminDashboard/AdminDashboard'));
+const UserDetailPage = lazy(() => import('./components/AdminDashboard/UserDetailPage'));
+const PaymentHistory = lazy(() => import('./pages/PaymentHistory'));
+const SavedSnippets = lazy(() => import('./pages/SavedSnippets'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const Coins = lazy(() => import('./pages/Coins'));
+const Reports = lazy(() => import('./pages/Reports'));
 // import OverviewTab from './components/AdminDashboard/tabs/OverviewTab';
 
 /* Redirect "/" based on auth state */
 function RootRedirect() {
   const { user, loading } = useAuth();
-  if (loading) return null;
+  if (loading) return <RouteSplash />;
   return user ? <Navigate to="/dashboard" replace /> : <Landing />;
 }
 
@@ -31,6 +33,7 @@ export default function App() {
     <ThemeProvider>
     <AuthProvider>
       <BrowserRouter>
+        <Suspense fallback={<RouteSplash />}>
         <Routes>
           {/* public */}
           <Route path="/"          element={<RootRedirect />} />
@@ -75,6 +78,7 @@ export default function App() {
           {/* catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
     </ThemeProvider>

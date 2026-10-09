@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 /* ════════════════════════════════════════════════════════════
    DSVP app-wide theme — dark (default) / light toggle.
@@ -78,12 +78,12 @@ export function ThemeProvider({ children }) {
     try { localStorage.setItem(STORAGE_KEY, mode); } catch { /* ignore */ }
   }, [mode]);
 
-  const value = {
-    mode,
-    T: THEMES[mode],
-    toggleTheme: () => setMode(m => (m === 'dark' ? 'light' : 'dark')),
-    setMode,
-  };
+  const toggleTheme = useCallback(() => setMode(m => (m === 'dark' ? 'light' : 'dark')), []);
+
+  const value = useMemo(
+    () => ({ mode, T: THEMES[mode], toggleTheme, setMode }),
+    [mode, toggleTheme],
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

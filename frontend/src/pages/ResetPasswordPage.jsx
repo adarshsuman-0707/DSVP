@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Logo from '../components/common/Logo';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { forgotResetPass } from '../services/api';
 
@@ -66,12 +67,7 @@ export default function ResetPasswordPage() {
         padding: 36, boxShadow: '0 24px 60px rgba(0,0,0,.35)',
       }}>
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', marginBottom: 24 }}>
-          <div style={{
-            width: 34, height: 34, borderRadius: 9,
-            background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 16, fontWeight: 800, color: '#fff',
-          }}>D</div>
+          <Logo size={34} />
           <span style={{ fontSize: 18, fontWeight: 700, color: '#1F4E79' }}>DSVP</span>
         </Link>
 

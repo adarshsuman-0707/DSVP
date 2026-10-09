@@ -42,12 +42,15 @@ export default function ModuleCatalog() {
   const navigate = useNavigate();
  const { T } = useTheme();
   useEffect(() => {
-    setLoading(true);
+    // Ignore responses from superseded filters / unmounted pages so a slow
+    // earlier request can never overwrite newer data.
+    let stale = false;
     setError('');
     getModules(filter)
-      .then(res => setModules(res.data.modules || []))
-      .catch(() => setError('Failed to load modules.'))
-      .finally(() => setLoading(false));
+      .then(res => { if (!stale) setModules(res.data.modules || []); })
+      .catch(() => { if (!stale) setError('Failed to load modules.'); })
+      .finally(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
   }, [filter]);
 
   function handleCardClick(m) {

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { useRef, useState, useEffect } from 'react';
+import Logo from '../components/common/Logo';
+import { memo, useRef, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useGsapContext, gsap } from '../hooks/useGsap';
 import AuroraBackground from '../components/common/AuroraBackground';
@@ -36,7 +37,6 @@ const S = {
     padding: '7px 18px', borderRadius: 8, fontSize: 14, fontWeight: 600,
     color: '#fff', border: '1.5px solid rgba(255,255,255,.35)',
     background: 'transparent', cursor: 'pointer', textDecoration: 'none',
-    transition: 'all 150ms',
   },
   btnPrimary: {
     padding: '8px 20px', borderRadius: 8, fontSize: 14, fontWeight: 600,
@@ -44,7 +44,6 @@ const S = {
     background: 'linear-gradient(135deg,#2E74B5,#1F4E79)',
     cursor: 'pointer', textDecoration: 'none',
     boxShadow: '0 4px 14px rgba(46,116,181,.45)',
-    transition: 'all 150ms',
   },
 
   /* ── HERO ── */
@@ -83,14 +82,13 @@ const S = {
     background: 'linear-gradient(135deg,#2E74B5,#1F4E79)',
     cursor: 'pointer', textDecoration: 'none',
     boxShadow: '0 6px 20px rgba(46,116,181,.5)',
-    transition: 'transform 150ms, box-shadow 150ms',
   },
   ctaSecondary: {
     padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 700,
     color: '#fff', textDecoration: 'none',
     border: '1.5px solid rgba(255,255,255,.3)',
     background: 'rgba(255,255,255,.08)',
-    cursor: 'pointer', transition: 'all 150ms',
+    cursor: 'pointer',
   },
 };
 
@@ -150,94 +148,23 @@ const steps = [
   { n: '04', title: 'Watch & learn', desc: 'The visualization plays the trace in sync with your code. Scrub, pause, rewind.' },
 ];
 
-export default function Landing() {
-  const { user } = useAuth();
-  const rootRef = useRef(null);
-  const navRef = useRef(null);
-  const blob1Ref = useRef(null);
-  const blob2Ref = useRef(null);
-  const statRefs = useRef([]);
+/* Scroll + menu state live here so scrolling past 24px re-renders only the
+   navbar, never the hero / feature sections. */
+const LandingNav = memo(function LandingNav({ user }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  useGsapContext(() => {
-    /* ── Hero entrance timeline ── */
-    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
-    tl.from('.nav-anim', { y: -24, opacity: 0, duration: 0.6, stagger: 0.06 })
-      .from('.hero-badge', { y: 16, opacity: 0, duration: 0.55 }, '-=0.2')
-      .from('.hero-title-word', { y: 40, opacity: 0, duration: 0.75, stagger: 0.08 }, '-=0.25')
-      .from('.hero-sub', { y: 20, opacity: 0, duration: 0.6 }, '-=0.35')
-      .from('.hero-cta > *', { y: 16, opacity: 0, duration: 0.5, stagger: 0.1 }, '-=0.3')
-      .from('.hero-stat', { y: 24, opacity: 0, duration: 0.55, stagger: 0.08 }, '-=0.25')
-      .from('.hero-visual', { x: 40, opacity: 0, scale: 0.96, duration: 0.8 }, '-=0.9');
-
-    /* ── Animated stat counters ── */
-    statRefs.current.forEach(el => {
-      if (!el) return;
-      const raw = el.dataset.value;
-      const numeric = parseFloat(raw.replace(/[^\d.]/g, ''));
-      if (Number.isNaN(numeric)) return; // skip "∞" / "100%"-style non-numeric handled below
-      const suffix = raw.replace(/[\d.]/g, '');
-      const counter = { val: 0 };
-      gsap.to(counter, {
-        val: numeric, duration: 1.6, delay: 1.1, ease: 'power2.out',
-        onUpdate: () => { el.textContent = Math.round(counter.val) + suffix; },
-      });
-    });
-
-    /* ── Floating blob parallax on mouse move ── */
-    const xTo1 = gsap.quickTo(blob1Ref.current, 'x', { duration: 1.1, ease: 'power3.out' });
-    const yTo1 = gsap.quickTo(blob1Ref.current, 'y', { duration: 1.1, ease: 'power3.out' });
-    const xTo2 = gsap.quickTo(blob2Ref.current, 'x', { duration: 1.4, ease: 'power3.out' });
-    const yTo2 = gsap.quickTo(blob2Ref.current, 'y', { duration: 1.4, ease: 'power3.out' });
-    function onMove(e) {
-      const nx = (e.clientX / window.innerWidth - 0.5);
-      const ny = (e.clientY / window.innerHeight - 0.5);
-      xTo1(nx * 60); yTo1(ny * 60);
-      xTo2(nx * -40); yTo2(ny * -40);
-    }
-    window.addEventListener('mousemove', onMove);
-
-    /* ── Scroll reveals ── */
-    gsap.utils.toArray('.feature-card').forEach((card, i) => {
-      gsap.from(card, {
-        y: 50, opacity: 0, duration: 0.7, ease: 'power3.out',
-        delay: (i % 3) * 0.08,
-        scrollTrigger: { trigger: card, start: 'top 88%' },
-      });
-    });
-
-    gsap.utils.toArray('.step-card').forEach((card, i) => {
-      gsap.from(card, {
-        y: 40, opacity: 0, duration: 0.65, ease: 'power3.out',
-        delay: i * 0.1,
-        scrollTrigger: { trigger: card, start: 'top 90%' },
-      });
-    });
-
-    gsap.from('.section-tag, .section-title, .section-desc', {
-      y: 24, opacity: 0, duration: 0.6, stagger: 0.08, ease: 'power3.out',
-      scrollTrigger: { trigger: '#features', start: 'top 80%' },
-    });
-
-    gsap.from('.cta-banner *', {
-      y: 24, opacity: 0, duration: 0.6, stagger: 0.08, ease: 'power3.out',
-      scrollTrigger: { trigger: '.cta-banner', start: 'top 85%' },
-    });
-
-    return () => window.removeEventListener('mousemove', onMove);
-  }, []);
-
   return (
-    <div style={S.page} ref={rootRef}>
+    <>
       {/* ── NAVBAR ── */}
-      <nav ref={navRef} style={{
+      <nav style={{
         ...S.nav,
         height: scrolled ? 56 : 64,
         background: scrolled ? 'rgba(10,25,41,.96)' : 'rgba(15,41,66,.88)',
@@ -245,7 +172,7 @@ export default function Landing() {
         transition: 'height 220ms ease, background 220ms ease, box-shadow 220ms ease',
       }}>
         <div style={S.navLogo} className="nav-anim">
-          <div style={S.logoMark}>D</div>
+          <Logo size={34} />
           <span style={S.logoText}>DSVP</span>
         </div>
         <div style={S.navLinks} className="nav-links-desktop">
@@ -310,6 +237,89 @@ export default function Landing() {
           )}
         </div>
       </div>
+    </>
+  );
+});
+
+export default function Landing() {
+  const { user } = useAuth();
+  const rootRef = useRef(null);
+  const blob1Ref = useRef(null);
+  const blob2Ref = useRef(null);
+  const statRefs = useRef([]);
+  useGsapContext(() => {
+    /* ── Hero entrance timeline ── */
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.from('.nav-anim', { y: -24, opacity: 0, duration: 0.6, stagger: 0.06 })
+      .from('.hero-badge', { y: 16, opacity: 0, duration: 0.55 }, '-=0.2')
+      .from('.hero-title-word', { y: 40, opacity: 0, duration: 0.75, stagger: 0.08 }, '-=0.25')
+      .from('.hero-sub', { y: 20, opacity: 0, duration: 0.6 }, '-=0.35')
+      .from('.hero-cta > *', { y: 16, opacity: 0, duration: 0.5, stagger: 0.1 }, '-=0.3')
+      .from('.hero-stat', { y: 24, opacity: 0, duration: 0.55, stagger: 0.08 }, '-=0.25')
+      .from('.hero-visual', { x: 40, opacity: 0, scale: 0.96, duration: 0.8 }, '-=0.9');
+
+    /* ── Animated stat counters ── */
+    statRefs.current.forEach(el => {
+      if (!el) return;
+      const raw = el.dataset.value;
+      const numeric = parseFloat(raw.replace(/[^\d.]/g, ''));
+      if (Number.isNaN(numeric)) return; // skip "∞" / "100%"-style non-numeric handled below
+      const suffix = raw.replace(/[\d.]/g, '');
+      const counter = { val: 0 };
+      el.textContent = '0' + suffix;
+      gsap.to(counter, {
+        val: numeric, duration: 1.6, delay: 1.1, ease: 'power2.out',
+        onUpdate: () => { el.textContent = Math.round(counter.val) + suffix; },
+      });
+    });
+
+    /* ── Floating blob parallax on mouse move ── */
+    const xTo1 = gsap.quickTo(blob1Ref.current, 'x', { duration: 1.1, ease: 'power3.out' });
+    const yTo1 = gsap.quickTo(blob1Ref.current, 'y', { duration: 1.1, ease: 'power3.out' });
+    const xTo2 = gsap.quickTo(blob2Ref.current, 'x', { duration: 1.4, ease: 'power3.out' });
+    const yTo2 = gsap.quickTo(blob2Ref.current, 'y', { duration: 1.4, ease: 'power3.out' });
+    function onMove(e) {
+      const nx = (e.clientX / window.innerWidth - 0.5);
+      const ny = (e.clientY / window.innerHeight - 0.5);
+      xTo1(nx * 60); yTo1(ny * 60);
+      xTo2(nx * -40); yTo2(ny * -40);
+    }
+    window.addEventListener('mousemove', onMove, { passive: true });
+
+    /* ── Scroll reveals ── */
+    gsap.utils.toArray('.feature-card').forEach((card, i) => {
+      gsap.from(card, {
+        y: 50, opacity: 0, duration: 0.7, ease: 'power3.out',
+        delay: (i % 3) * 0.08,
+        scrollTrigger: { trigger: card, start: 'top 88%' },
+        onComplete: () => { gsap.set(card, { clearProps: 'transform,opacity' }); card.classList.add('revealed'); },
+      });
+    });
+
+    gsap.utils.toArray('.step-card').forEach((card, i) => {
+      gsap.from(card, {
+        y: 40, opacity: 0, duration: 0.65, ease: 'power3.out',
+        delay: i * 0.1,
+        scrollTrigger: { trigger: card, start: 'top 90%' },
+      });
+    });
+
+    gsap.from('.section-tag, .section-title, .section-desc', {
+      y: 24, opacity: 0, duration: 0.6, stagger: 0.08, ease: 'power3.out',
+      scrollTrigger: { trigger: '#features', start: 'top 80%' },
+    });
+
+    gsap.from('.cta-banner *', {
+      y: 24, opacity: 0, duration: 0.6, stagger: 0.08, ease: 'power3.out',
+      scrollTrigger: { trigger: '.cta-banner', start: 'top 85%' },
+    });
+
+    return () => window.removeEventListener('mousemove', onMove);
+  }, []);
+
+  return (
+    <div style={S.page} ref={rootRef}>
+      <LandingNav user={user} />
 
       {/* ── HERO ── */}
       <section style={S.hero}>
@@ -420,19 +430,8 @@ export default function Landing() {
             <div key={f.title} className="feature-card" style={{
               position: 'relative', background: '#fff', border: '1px solid #e2e8f0',
               borderRadius: 16, padding: '28px 28px', overflow: 'hidden',
-              boxShadow: '0 2px 8px rgba(0,0,0,.05)',
-              transition: 'transform 200ms, box-shadow 200ms, border-color 200ms',
+              boxShadow: '0 2px 8px rgba(0,0,0,.05)', '--fc': f.color,
             }}
-              onMouseEnter={e => {
-                e.currentTarget.style.transform = 'translateY(-6px) scale(1.015)';
-                e.currentTarget.style.boxShadow = `0 20px 40px ${f.color}22, 0 4px 10px rgba(0,0,0,.06)`;
-                e.currentTarget.style.borderColor = `${f.color}55`;
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.05)';
-                e.currentTarget.style.borderColor = '#e2e8f0';
-              }}
             >
               {/* gradient top accent */}
               <span style={{
@@ -504,11 +503,8 @@ export default function Landing() {
           fontSize: 16, fontWeight: 700, color: '#fff',
           background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
           boxShadow: '0 8px 24px rgba(46,116,181,.45)',
-          textDecoration: 'none', transition: 'transform 150ms',
-        }}
-          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px) scale(1.03)'; }}
-          onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0) scale(1)'; }}
-        >
+          textDecoration: 'none',
+        }} className="cta-link">
           Create free account →
         </Link>
       </section>
@@ -520,12 +516,7 @@ export default function Landing() {
         flexWrap: 'wrap', gap: 12,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 6,
-            background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13, fontWeight: 800, color: '#fff',
-          }}>D</div>
+          <Logo size={28} />
           <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,.6)' }}>
             DSVP — Data Structure Visualization Platform
           </span>
@@ -536,6 +527,14 @@ export default function Landing() {
       </footer>
 
       <style>{`
+        .feature-card.revealed { transition: transform 200ms, box-shadow 200ms, border-color 200ms; }
+        .feature-card.revealed:hover {
+          transform: translateY(-6px) scale(1.015);
+          box-shadow: 0 20px 40px color-mix(in srgb, var(--fc) 13%, transparent), 0 4px 10px rgba(0,0,0,.06);
+          border-color: color-mix(in srgb, var(--fc) 33%, transparent);
+        }
+        .cta-link { transition: transform 150ms; }
+        .cta-banner .cta-link:hover { transform: translateY(-2px) scale(1.03); }
         .nav-link-underline { position: relative; }
         .nav-link-underline::after {
           content: ''; position: absolute; left: 16px; right: 16px; bottom: 4px;

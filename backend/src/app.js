@@ -17,8 +17,24 @@ const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 
 const app = express();
 
-app.use(helmet());
-app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
+// CLIENT_URL may hold several comma-separated origins. In non-production,
+// any localhost / 127.0.0.1 port is also allowed (Vite hops ports when 5173 is busy).
+const allowedOrigins = (process.env.CLIENT_URL || '').split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+const isLocalOrigin = o => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o);
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);                       // curl / server-to-server
+    if (allowedOrigins.length === 0) return cb(null, true);   // nothing configured → open
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (process.env.NODE_ENV !== 'production' && isLocalOrigin(origin)) return cb(null, true);
+    return cb(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  exposedHeaders: ['Content-Disposition'],   // report downloads read the filename from it
+}));
+// Helmet's default same-origin CORP would block cross-origin reads of API responses/downloads.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // Razorpay webhook signature is computed over the exact raw request bytes,
 // so this one path must get the raw Buffer instead of the parsed JSON body.

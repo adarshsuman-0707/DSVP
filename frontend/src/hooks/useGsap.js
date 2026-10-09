@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useLayoutEffect } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
@@ -11,7 +11,7 @@ export { gsap, ScrollTrigger };
  * Cleans up all tweens/ScrollTriggers created inside `fn` on unmount.
  */
 export function useGsapContext(fn, deps = []) {
-  useEffect(() => {
+  useLayoutEffect(() => {
     let extraCleanup;
     const ctx = gsap.context(() => { extraCleanup = fn(); });
     return () => {

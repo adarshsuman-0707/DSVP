@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Logo from './Logo';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -235,6 +236,7 @@ export default function AppShell({ children }) {
     let prevBalance = user?.CoinBalance ?? 0;
     let cancelled = false;
     const poll = async () => {
+      if (document.hidden) return;
       try {
         const res = await getCoinWallet();
         const balance = res.data?.coinBalance;
@@ -298,13 +300,7 @@ export default function AppShell({ children }) {
             <Link to="/dashboard" style={{
               display: 'flex', alignItems: 'center', gap: 9, textDecoration: 'none',
             }}>
-              <div style={{
-                width: 30, height: 30, borderRadius: 8,
-                background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 15, fontWeight: 800, color: '#fff', flexShrink: 0,
-                boxShadow: mode === 'dark' ? '0 0 12px rgba(59,130,196,.5)' : 'none',
-              }}>D</div>
+              <Logo size={30} style={{ boxShadow: mode === 'dark' ? '0 0 12px rgba(59,130,196,.5)' : 'none' }} />
               <span style={{ fontSize: 16, fontWeight: 700, color: T.accent }}>DSVP</span>
             </Link>
           )}

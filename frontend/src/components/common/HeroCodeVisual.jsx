@@ -14,9 +14,8 @@ export default function HeroCodeVisual() {
   return (
     <div style={{
       width: '100%', maxWidth: 440, borderRadius: 18,
-      background: 'linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03))',
+      background: 'linear-gradient(180deg,rgba(30,62,96,.92),rgba(20,46,74,.92))',
       border: '1px solid rgba(255,255,255,.14)',
-      backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
       boxShadow: '0 30px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08)',
       overflow: 'hidden',
     }}>

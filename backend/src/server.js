@@ -1,7 +1,7 @@
 const app = require('./app');
 const { getPool } = require('./config/db');
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5050;
 
 async function start() {
   try {

@@ -1,0 +1,356 @@
+/* ============================================================
+   DSVP — Authentication (login / register / reset)
+   Scoped under .auth-page so nothing leaks into other pages.
+   ============================================================ */
+
+.auth-page {
+  --a-bg:        #0B1929;
+  --a-bg-2:      #10243A;
+  --a-surface:   #16314C;
+  --a-field:     #11283F;
+  --a-border:    rgba(148, 178, 214, .20);
+  --a-border-hi: rgba(148, 178, 214, .38);
+  --a-text:      #F1F5F9;
+  --a-text-2:    #A8B8CC;
+  --a-text-3:    #7B8DA3;
+  --a-blue:      #3B82F6;
+  --a-blue-hi:   #5B9BFF;
+  --a-teal:      #2DD4BF;
+  --a-emerald:   #34D399;
+  --a-danger:    #F87171;
+  --a-mono:      'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  background: var(--a-bg);
+  color: var(--a-text);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* ── Left: brand + visual story ───────────────────────────── */
+.auth-story {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 32px;
+  padding: clamp(28px, 4.2vw, 56px) clamp(28px, 4.6vw, 72px);
+  background:
+    radial-gradient(900px 520px at 18% 12%, rgba(45, 212, 191, .10), transparent 62%),
+    linear-gradient(160deg, #0B1929 0%, #0E2238 55%, #10243A 100%);
+}
+.auth-story::before {            /* quiet technical grid, fades toward the edges */
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(148, 178, 214, .06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 178, 214, .06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 40% 45%, #000 30%, transparent 100%);
+          mask-image: radial-gradient(ellipse 80% 70% at 40% 45%, #000 30%, transparent 100%);
+  pointer-events: none;
+}
+.auth-story-paths {              /* fine node/edge geometry */
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; opacity: .55;
+}
+.auth-story > *:not(.auth-story-paths) { position: relative; z-index: 1; }
+
+.auth-brand {
+  display: inline-flex; align-items: center; gap: 11px;
+  color: var(--a-text); text-decoration: none; width: fit-content;
+  border-radius: 8px;
+}
+.auth-brand-mark { width: 34px; height: 34px; flex-shrink: 0; }
+.auth-brand-word { font-size: 19px; font-weight: 700; letter-spacing: -.02em; }
+
+.auth-story-copy { max-width: 520px; }
+.auth-story-copy h2 {
+  font-size: clamp(30px, 3.2vw, 42px);
+  font-weight: 700; letter-spacing: -.03em; line-height: 1.1;
+  color: var(--a-text);
+}
+.auth-story-copy p {
+  margin-top: 12px; max-width: 440px;
+  color: var(--a-text-2); font-size: 16px; line-height: 1.6;
+}
+
+.auth-story-foot {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  font-family: var(--a-mono); font-size: 11.5px; letter-spacing: .02em;
+  color: var(--a-text-3);
+}
+.auth-story-foot span + span::before { content: '/'; margin-right: 18px; color: rgba(148, 178, 214, .3); }
+
+/* ── Algorithm visualization (debugger-style panel) ───────── */
+.algo {
+  width: 100%; max-width: 560px;
+  background: rgba(16, 36, 58, .72);
+  border: 1px solid var(--a-border);
+  border-radius: 14px;
+  overflow: hidden;
+  font-family: var(--a-mono);
+}
+.algo-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--a-border);
+  font-size: 11px; letter-spacing: .06em; color: var(--a-text-3);
+}
+.algo-bar b { font-weight: 500; color: var(--a-text-2); }
+.algo-bar .algo-step { color: var(--a-teal); }
+
+.algo-body { padding: 22px 18px 18px; }
+.algo-cells { display: flex; gap: 8px; }
+.algo-cell {
+  position: relative; flex: 1 1 0; min-width: 0; max-width: 64px;
+  display: flex; flex-direction: column; align-items: center;
+}
+.algo-box {
+  width: 100%; aspect-ratio: 1 / 1; max-height: 64px;
+  display: grid; place-items: center;
+  border-radius: 9px;
+  background: var(--a-field);
+  border: 1px solid var(--a-border);
+  font-size: 18px; font-weight: 500; color: var(--a-text);
+  transition: background-color .25s ease, border-color .25s ease, color .25s ease;
+}
+.algo-cell.is-cmp  .algo-box { border-color: var(--a-blue); background: rgba(59, 130, 246, .16); }
+.algo-cell.is-swap .algo-box { border-color: var(--a-teal); background: rgba(45, 212, 191, .16); color: var(--a-teal); }
+.algo-cell.is-done .algo-box { border-color: rgba(52, 211, 153, .45); color: var(--a-emerald); }
+.algo-idx { margin-top: 7px; font-size: 10.5px; color: var(--a-text-3); }
+.algo-ptr {
+  height: 16px; margin-top: 3px;
+  font-size: 10.5px; font-weight: 500; letter-spacing: .02em;
+  color: var(--a-blue-hi);
+}
+.algo-cell.is-swap .algo-ptr { color: var(--a-teal); }
+
+.algo-line {
+  margin-top: 16px; padding: 10px 12px;
+  border-radius: 8px; background: rgba(11, 25, 41, .6);
+  border: 1px solid var(--a-border);
+  font-size: 12px; color: var(--a-text-2); min-height: 40px;
+  display: flex; align-items: center;
+}
+.algo-line em { font-style: normal; color: var(--a-teal); }
+
+.algo-meta {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  margin-top: 12px;
+}
+.algo-meta div {
+  padding: 9px 12px; border-radius: 8px;
+  background: rgba(11, 25, 41, .45); border: 1px solid var(--a-border);
+}
+.algo-meta small { display: block; font-size: 10px; letter-spacing: .08em; color: var(--a-text-3); }
+.algo-meta span  { font-size: 14px; color: var(--a-text); }
+
+.algo-track {
+  display: flex; gap: 4px; margin-top: 16px;
+}
+.algo-track i {
+  flex: 1; height: 4px; border-radius: 2px;
+  background: rgba(148, 178, 214, .18);
+  transition: background-color .25s ease;
+}
+.algo-track i.on  { background: var(--a-blue); }
+.algo-track i.cur { background: var(--a-teal); }
+
+/* ── Right: authentication ────────────────────────────────── */
+.auth-main {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: clamp(24px, 4vw, 56px) clamp(20px, 4vw, 56px);
+  background: linear-gradient(180deg, #0D2036 0%, #0B1D31 100%);
+  border-left: 1px solid var(--a-border);
+}
+.auth-panel {
+  width: 100%; max-width: 440px;
+  animation: auth-in .38s cubic-bezier(.2, .7, .2, 1) both;
+}
+@keyframes auth-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.auth-mobile-brand { display: none; margin-bottom: 28px; }
+
+.auth-head h1 {
+  font-size: 28px; font-weight: 700; letter-spacing: -.025em; line-height: 1.2;
+  color: var(--a-text);
+}
+.auth-head p { margin-top: 8px; color: var(--a-text-2); font-size: 15px; }
+.auth-head-row { display: flex; align-items: flex-start; gap: 12px; }
+.auth-head-row h1 { font-size: 24px; }
+.auth-head { margin-bottom: 28px; }
+
+.auth-field { margin-bottom: 18px; }
+.auth-label-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 7px; }
+.auth-label { font-size: 13.5px; font-weight: 500; color: var(--a-text); }
+
+.auth-input {
+  display: block; width: 100%; height: 50px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--a-field);
+  border: 1px solid var(--a-border);
+  color: var(--a-text);
+  font: inherit; font-size: 15px;
+  transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
+}
+.auth-input::placeholder { color: var(--a-text-3); }
+.auth-input:hover { border-color: var(--a-border-hi); }
+.auth-input:focus {
+  outline: none; border-color: var(--a-blue);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .28);
+}
+.auth-input-wrap { position: relative; }
+.auth-input-wrap .auth-input { padding-right: 48px; }
+.auth-eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 42px; height: 42px; display: grid; place-items: center;
+  border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--a-text-3); transition: color .16s ease, background-color .16s ease;
+}
+.auth-eye:hover { color: var(--a-text); background: rgba(148, 178, 214, .1); }
+
+.auth-link {
+  color: var(--a-blue-hi); font-weight: 500; text-decoration: none;
+  background: none; border: 0; padding: 0; font: inherit; font-size: 13.5px; font-weight: 500;
+  cursor: pointer; border-radius: 4px; transition: color .16s ease;
+}
+.auth-link:hover { color: var(--a-teal); text-decoration: underline; text-underline-offset: 3px; }
+.auth-link:disabled { opacity: .5; cursor: not-allowed; text-decoration: none; }
+
+.auth-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; height: 50px; margin-top: 8px;
+  border: 0; border-radius: 10px; cursor: pointer;
+  background: var(--a-blue); color: #fff;
+  font: inherit; font-size: 15px; font-weight: 600;
+  transition: background-color .16s ease, transform .12s ease, box-shadow .16s ease;
+}
+.auth-btn:hover:not(:disabled)  { background: #2F72E5; }
+.auth-btn:active:not(:disabled) { transform: translateY(1px); }
+.auth-btn:disabled { background: #2A4A75; color: rgba(255, 255, 255, .55); cursor: not-allowed; }
+.auth-btn svg { transition: transform .16s ease; }
+.auth-btn:hover:not(:disabled) svg { transform: translateX(2px); }
+.auth-spin {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff;
+  animation: auth-rot .7s linear infinite;
+}
+@keyframes auth-rot { to { transform: rotate(360deg); } }
+
+.auth-alert {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin-bottom: 20px; padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, .10);
+  border: 1px solid rgba(248, 113, 113, .38);
+  color: #FECACA; font-size: 13.5px;
+}
+.auth-alert svg { flex-shrink: 0; margin-top: 2px; color: var(--a-danger); }
+
+.auth-foot { margin-top: 26px; text-align: center; font-size: 14px; color: var(--a-text-2); }
+.auth-foot .auth-link { font-size: 14px; }
+.auth-home {
+  margin-top: 22px; font-size: 13px; color: var(--a-text-3); text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; border-radius: 4px;
+  transition: color .16s ease;
+}
+.auth-home:hover { color: var(--a-text); }
+
+.auth-back {
+  width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center;
+  border-radius: 9px; cursor: pointer;
+  background: var(--a-field); border: 1px solid var(--a-border); color: var(--a-text-2);
+  transition: border-color .16s ease, color .16s ease;
+}
+.auth-back:hover { border-color: var(--a-border-hi); color: var(--a-text); }
+
+/* step indicator */
+.auth-steps { display: flex; gap: 6px; margin-bottom: 24px; }
+.auth-steps div { flex: 1; }
+.auth-steps i { display: block; height: 3px; border-radius: 2px; background: rgba(148, 178, 214, .2); transition: background-color .25s ease; }
+.auth-steps .on i { background: var(--a-blue); }
+.auth-steps span { display: block; margin-top: 6px; font-size: 12px; color: var(--a-text-3); }
+.auth-steps .on span { color: var(--a-text-2); }
+
+/* OTP */
+.auth-otp { display: flex; gap: 8px; justify-content: space-between; }
+.auth-otp input {
+  width: 100%; max-width: 56px; height: 54px; padding: 0; text-align: center;
+  border-radius: 10px; background: var(--a-field); border: 1px solid var(--a-border);
+  color: var(--a-text); font-family: var(--a-mono); font-size: 22px; font-weight: 500;
+  caret-color: var(--a-blue-hi);
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.auth-otp input.filled { border-color: var(--a-border-hi); }
+.auth-otp input:focus { outline: none; border-color: var(--a-blue); box-shadow: 0 0 0 3px rgba(59, 130, 246, .28); }
+.auth-resend { margin-top: 14px; text-align: center; font-size: 13.5px; color: var(--a-text-3); }
+.auth-resend b { color: var(--a-text-2); font-weight: 600; }
+
+.auth-hint { margin: -8px 0 16px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.auth-hint.ok  { color: var(--a-emerald); }
+.auth-hint.bad { color: var(--a-danger); }
+
+.auth-strength { display: flex; gap: 4px; margin-top: 9px; }
+.auth-strength i { flex: 1; height: 3px; border-radius: 2px; background: rgba(148, 178, 214, .2); transition: background-color .2s ease; }
+.auth-strength-label { display: block; margin-top: 5px; font-size: 12px; }
+
+.auth-done { text-align: center; padding: 8px 0; }
+.auth-done-badge {
+  width: 56px; height: 56px; margin: 0 auto 18px; display: grid; place-items: center;
+  border-radius: 50%; background: rgba(52, 211, 153, .12); border: 1px solid rgba(52, 211, 153, .4);
+  color: var(--a-emerald);
+}
+
+/* keyboard focus — visible everywhere */
+.auth-page a:focus-visible,
+.auth-page button:focus-visible {
+  outline: 2px solid var(--a-blue-hi); outline-offset: 3px;
+}
+.auth-page .auth-btn:focus-visible { outline-offset: 2px; }
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 1180px) {
+  .auth-page { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .auth-story { padding: 32px 32px; }
+  .algo-body { padding: 18px 14px 14px; }
+  .algo-cells { gap: 6px; }
+  .algo-box { font-size: 16px; }
+}
+
+@media (max-width: 920px) {        /* single column: the form leads */
+  .auth-page { grid-template-columns: minmax(0, 1fr); }
+  .auth-story { display: none; }
+  .auth-main { border-left: 0; justify-content: flex-start; padding-top: clamp(28px, 8vh, 72px); }
+  .auth-mobile-brand { display: inline-flex; }
+  .auth-panel { max-width: 440px; }
+}
+
+@media (max-width: 380px) {
+  .auth-head h1 { font-size: 24px; }
+  .auth-otp { gap: 5px; }
+  .auth-otp input { height: 48px; font-size: 19px; }
+}
+
+@media (max-height: 640px) and (min-width: 921px) {
+  .auth-story-foot { display: none; }
+}
+
+/* ── Reduced motion: still polished, nothing moves ───────── */
+@media (prefers-reduced-motion: reduce) {
+  .auth-panel { animation: none; }
+  .auth-spin  { animation-duration: 1.6s; }
+  .auth-page *, .auth-page *::before, .auth-page *::after {
+    transition-duration: .01ms !important;
+  }
+}
