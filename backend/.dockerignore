@@ -1,0 +1,15 @@
+node_modules
+.env
+.env.*
+npm-debug.log*
+*.log
+.git
+Dockerfile
+.dockerignore
+web.config
+*.class
+diag*.js
+find_*.js
+test_*.js
+src/services/instrumenter
+src/services/__pycache__

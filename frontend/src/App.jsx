@@ -6,6 +6,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import RouteSplash from './components/common/RouteSplash';
 import Landing from './pages/Landing';
+const LegalPage = lazy(() => import('./pages/LegalPage'));
 const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const Workspace = lazy(() => import('./pages/Workspace'));
@@ -39,6 +40,9 @@ export default function App() {
           <Route path="/"          element={<RootRedirect />} />
           <Route path="/login"     element={<Login />} />
           <Route path="/register"  element={<Register />} />
+          <Route path="/privacy" element={<LegalPage doc="privacy" />} />
+          <Route path="/terms"   element={<LegalPage doc="terms" />} />
+          <Route path="/cookies" element={<LegalPage doc="cookies" />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
        {/* <Route path="/over"  element={<OverviewTab />} /> */}
           {/* authenticated */}

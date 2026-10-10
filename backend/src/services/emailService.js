@@ -1,4 +1,29 @@
+const path = require('path');
 const nodemailer = require('nodemailer');
+
+// Same DSVP icon the frontend uses, embedded inline (CID) so it shows in
+// mail clients without needing a publicly reachable image URL.
+const LOGO_CID = 'dsvp-logo';
+const LOGO_ATTACHMENT = {
+  filename: 'logo.png',
+  path: path.join(__dirname, '..', 'assets', 'logo.png'),
+  cid: LOGO_CID,
+};
+
+function brandHeader() {
+  return `
+      <div style="background:linear-gradient(135deg,#1F4E79,#2E74B5);padding:24px 32px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="vertical-align:middle;padding-right:12px;">
+            <img src="cid:${LOGO_CID}" alt="DSVP" width="44" height="44" style="display:block;border-radius:10px;border:0;" />
+          </td>
+          <td style="vertical-align:middle;">
+            <div style="font-size:20px;font-weight:700;color:#fff;line-height:1.2;">DSVP</div>
+            <div style="font-size:12px;color:#cfe3f5;line-height:1.3;">Data Structure Visualization Platform</div>
+          </td>
+        </tr></table>
+      </div>`;
+}
 
 let _transporter = null;
 
@@ -29,23 +54,7 @@ async function sendOtpEmail(toEmail, otp, expiresMin = 10) {
   const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
   const html = `
     <div style="font-family:'Inter',Arial,sans-serif;max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
-      <div style="background:linear-gradient(135deg,#1F4E79,#2E74B5);padding:28px 32px;">
-       <div style="
-        width: 30px;
-        height: 30px;
-        border-radius: 8px;
-        background: linear-gradient(135deg, #2E74B5, #4CAF50);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 15px;
-        font-weight: 800;
-        color: #fff;
-        flex-shrink: 0;
-    ">D</div>
-        <span style="font-size:20px;font-weight:700;color:#fff;">DSVP</span>
-        </div>
-      </div>
+${brandHeader()}
 
       <div style="padding:32px;">
         <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Password Reset OTP</h2>
@@ -80,6 +89,7 @@ async function sendOtpEmail(toEmail, otp, expiresMin = 10) {
     subject: `${otp} is your DSVP password reset OTP`,
     text:    `Your DSVP password reset OTP is: ${otp}\n\nIt expires in ${expiresMin} minutes.\n\nIf you didn't request this, ignore this email.`,
     html,
+    attachments: [LOGO_ATTACHMENT],
   });
 }
 
@@ -89,10 +99,7 @@ async function sendSignupOtpEmail(toEmail, otp, expiresMin = 10) {
 
   const html = `
     <div style="font-family:'Inter',Arial,sans-serif;max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
-      <div style="background:linear-gradient(135deg,#1F4E79,#2E74B5);padding:28px 32px;display:flex;align-items:center;gap:10px;">
-        <div style="width:34px;height:34px;border-radius:8px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;">D</div>
-        <span style="font-size:20px;font-weight:700;color:#fff;">DSVP</span>
-      </div>
+${brandHeader()}
 
       <div style="padding:32px;">
         <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Verify your email</h2>
@@ -126,15 +133,14 @@ async function sendSignupOtpEmail(toEmail, otp, expiresMin = 10) {
     subject: `${otp} — Verify your DSVP account`,
     text:    `Your DSVP email verification OTP is: ${otp}\n\nIt expires in ${expiresMin} minutes.\n\nIf you didn't sign up, ignore this email.`,
     html,
+    attachments: [LOGO_ATTACHMENT],
   });
 }
 
 function baseWrapper(bodyHtml) {
   return `
     <div style="font-family:'Inter',Arial,sans-serif;max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
-      <div style="background:linear-gradient(135deg,#1F4E79,#2E74B5);padding:28px 32px;">
-        <span style="font-size:20px;font-weight:700;color:#fff;">DSVP</span>
-      </div>
+${brandHeader()}
       <div style="padding:32px;">${bodyHtml}</div>
       <div style="background:#f8fafc;padding:16px 32px;border-top:1px solid #e2e8f0;">
         <p style="font-size:12px;color:#94a3b8;margin:0;text-align:center;">
@@ -178,6 +184,7 @@ async function sendAdminPasswordResetEmail(toEmail, fullName, resetLink) {
     subject: 'Password Reset Request',
     text: `Hello ${fullName || ''},\n\nYour password reset was requested by an administrator. Use this link to set a new password (expires soon, single use):\n\n${resetLink}\n\nIf you didn't expect this, contact support.`,
     html,
+    attachments: [LOGO_ATTACHMENT],
   });
 }
 
@@ -222,6 +229,7 @@ async function sendAccountStatusEmail(status, toEmail, fullName) {
     subject: copy.subject,
     text: `Hello ${fullName || ''},\n\n${copy.body}`,
     html,
+    attachments: [LOGO_ATTACHMENT],
   });
 }
 

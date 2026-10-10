@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import SiteFooter from '../components/common/SiteFooter';
 import Logo from '../components/common/Logo';
 import { memo, useRef, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -171,19 +172,20 @@ const LandingNav = memo(function LandingNav({ user }) {
         boxShadow: scrolled ? '0 8px 24px rgba(0,0,0,.25)' : 'none',
         transition: 'height 220ms ease, background 220ms ease, box-shadow 220ms ease',
       }}>
-        <div style={S.navLogo} className="nav-anim">
-          <Logo size={34} />
+        <Link to="/" aria-label="DSVP home" style={{ ...S.navLogo, textDecoration: 'none' }} className="nav-anim">
+          <Logo size={38} />
           <span style={S.logoText}>DSVP</span>
-        </div>
+        </Link>
         <div style={S.navLinks} className="nav-links-desktop">
+          <a href="#top" style={S.navLink} className="nav-anim nav-link-underline">Home</a>
           <a href="#features" style={S.navLink} className="nav-anim nav-link-underline">Features</a>
           <a href="#how-it-works" style={S.navLink} className="nav-anim nav-link-underline">How it works</a>
           {user ? (
             <Link to="/dashboard" style={S.btnPrimary} className="nav-anim">Go to Dashboard</Link>
           ) : (
             <>
-              <Link to="/login"    style={S.btnOutline} className="nav-anim">Log in</Link>
-              <Link to="/register" style={S.btnPrimary} className="nav-anim">Get started</Link>
+              <Link to="/login"    style={S.btnOutline} className="nav-anim">Sign in</Link>
+              <Link to="/register" style={S.btnPrimary} className="nav-anim">Create account</Link>
             </>
           )}
         </div>
@@ -224,6 +226,7 @@ const LandingNav = memo(function LandingNav({ user }) {
         maxHeight: menuOpen ? 320 : 0, overflow: 'hidden', opacity: menuOpen ? 1 : 0,
         transition: 'max-height 260ms ease, padding 260ms ease, opacity 200ms ease',
       }}>
+        <a href="#top" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>Home</a>
         <a href="#features" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>Features</a>
         <a href="#how-it-works" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>How it works</a>
         <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
@@ -231,8 +234,8 @@ const LandingNav = memo(function LandingNav({ user }) {
             <Link to="/dashboard" onClick={() => setMenuOpen(false)} style={{ ...S.btnPrimary, flex: 1, textAlign: 'center' }}>Go to Dashboard</Link>
           ) : (
             <>
-              <Link to="/login" onClick={() => setMenuOpen(false)} style={{ ...S.btnOutline, flex: 1, textAlign: 'center' }}>Log in</Link>
-              <Link to="/register" onClick={() => setMenuOpen(false)} style={{ ...S.btnPrimary, flex: 1, textAlign: 'center' }}>Get started</Link>
+              <Link to="/login" onClick={() => setMenuOpen(false)} style={{ ...S.btnOutline, flex: 1, textAlign: 'center' }}>Sign in</Link>
+              <Link to="/register" onClick={() => setMenuOpen(false)} style={{ ...S.btnPrimary, flex: 1, textAlign: 'center' }}>Create account</Link>
             </>
           )}
         </div>
@@ -244,6 +247,12 @@ const LandingNav = memo(function LandingNav({ user }) {
 export default function Landing() {
   const { user } = useAuth();
   const rootRef = useRef(null);
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const t = setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView(), 50);
+    return () => clearTimeout(t);
+  }, [hash]);
   const blob1Ref = useRef(null);
   const blob2Ref = useRef(null);
   const statRefs = useRef([]);
@@ -318,7 +327,7 @@ export default function Landing() {
   }, []);
 
   return (
-    <div style={S.page} ref={rootRef}>
+    <div style={S.page} ref={rootRef} id="top">
       <LandingNav user={user} />
 
       {/* ── HERO ── */}
@@ -361,7 +370,7 @@ export default function Landing() {
             </h1>
 
             <p style={S.heroSub} className="hero-sub">
-              DSVP turns your algorithms into living, step-by-step animations.
+              <strong>DSVP</strong> (Data Structure Visualization Platform) turns your algorithms into living, step-by-step animations.
               Write once, visualize instantly — in Python, C++, Java, C, or C#.
             </p>
 
@@ -509,22 +518,7 @@ export default function Landing() {
         </Link>
       </section>
 
-      {/* ── FOOTER ── */}
-      <footer style={{
-        padding: '32px 5%', background: '#0a1929',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        flexWrap: 'wrap', gap: 12,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Logo size={28} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,.6)' }}>
-            DSVP — Data Structure Visualization Platform
-          </span>
-        </div>
-        <p style={{ fontSize: 12, color: 'rgba(255,255,255,.35)' }}>
-          © {new Date().getFullYear()} DSVP. All rights reserved.
-        </p>
-      </footer>
+      <SiteFooter />
 
       <style>{`
         .feature-card.revealed { transition: transform 200ms, box-shadow 200ms, border-color 200ms; }
