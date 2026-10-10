@@ -122,7 +122,8 @@ const EXTRA_BIN_DIRS = [
 async function findExecutable(names) {
   for (const name of names) {
     try {
-      const { stdout } = await execAsync(`where ${name}`, { timeout: 3000 });
+      const lookup = process.platform === 'win32' ? 'where' : 'which';
+      const { stdout } = await execAsync(`${lookup} ${name}`, { timeout: 3000 });
       const found = stdout.trim().split('\n')[0].trim();
       if (found) return found;
     } catch (_) { /* not on system PATH */ }
