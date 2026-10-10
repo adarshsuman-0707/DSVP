@@ -1,5 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
 import SiteFooter from '../components/common/SiteFooter';
+import AlgoDemo from '../components/landing/AlgoDemo';
+import {
+  Section, ExploreSection, LanguagesSection, RoadmapSection, WhySection,
+  AccessSection, FaqSection, LandingSectionStyles,
+} from '../components/landing/LandingSections';
 import Logo from '../components/common/Logo';
 import { memo, useRef, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -178,8 +183,11 @@ const LandingNav = memo(function LandingNav({ user }) {
         </Link>
         <div style={S.navLinks} className="nav-links-desktop">
           <a href="#top" style={S.navLink} className="nav-anim nav-link-underline">Home</a>
+          <a href="#demo" style={S.navLink} className="nav-anim nav-link-underline">Demo</a>
+          <a href="#modules" style={S.navLink} className="nav-anim nav-link-underline">Modules</a>
           <a href="#features" style={S.navLink} className="nav-anim nav-link-underline">Features</a>
           <a href="#how-it-works" style={S.navLink} className="nav-anim nav-link-underline">How it works</a>
+          <a href="#faq" style={S.navLink} className="nav-anim nav-link-underline">FAQ</a>
           {user ? (
             <Link to="/dashboard" style={S.btnPrimary} className="nav-anim">Go to Dashboard</Link>
           ) : (
@@ -223,12 +231,15 @@ const LandingNav = memo(function LandingNav({ user }) {
         background: 'rgba(10,25,41,.98)', backdropFilter: 'blur(14px)',
         borderBottom: '1px solid rgba(255,255,255,.08)',
         display: 'flex', flexDirection: 'column', gap: 4, padding: menuOpen ? '14px 5% 20px' : '0 5%',
-        maxHeight: menuOpen ? 320 : 0, overflow: 'hidden', opacity: menuOpen ? 1 : 0,
+        maxHeight: menuOpen ? 520 : 0, overflow: 'hidden', opacity: menuOpen ? 1 : 0,
         transition: 'max-height 260ms ease, padding 260ms ease, opacity 200ms ease',
       }}>
         <a href="#top" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>Home</a>
+        <a href="#demo" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>Demo</a>
+        <a href="#modules" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>Modules</a>
         <a href="#features" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>Features</a>
         <a href="#how-it-works" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>How it works</a>
+        <a href="#faq" onClick={() => setMenuOpen(false)} style={{ ...S.navLink, padding: '12px 8px' }}>FAQ</a>
         <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
           {user ? (
             <Link to="/dashboard" onClick={() => setMenuOpen(false)} style={{ ...S.btnPrimary, flex: 1, textAlign: 'center' }}>Go to Dashboard</Link>
@@ -318,7 +329,7 @@ export default function Landing() {
       scrollTrigger: { trigger: '#features', start: 'top 80%' },
     });
 
-    gsap.from('.cta-banner *', {
+    gsap.from('.cta-banner > *', {
       y: 24, opacity: 0, duration: 0.6, stagger: 0.08, ease: 'power3.out',
       scrollTrigger: { trigger: '.cta-banner', start: 'top 85%' },
     });
@@ -411,9 +422,17 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── LIVE DEMO ── */}
+      <Section id="demo" tint tag="Interactive demo" title="See Your Algorithm in Action"
+        desc="Explore how data changes, pointers move, and algorithms execute — one step at a time.">
+        <AlgoDemo />
+      </Section>
+
+      <ExploreSection />
+
       {/* ── FEATURES ── */}
       <section id="features" style={{
-        padding: '100px 5%', background: '#fff',
+        padding: '100px 5%', background: '#f8fafc',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 60 }}>
           <span className="section-tag" style={{
@@ -462,7 +481,7 @@ export default function Landing() {
       </section>
 
       {/* ── HOW IT WORKS ── */}
-      <section id="how-it-works" style={{ padding: '100px 5%', background: '#f8fafc' }}>
+      <section id="how-it-works" style={{ padding: '100px 5%', background: '#fff' }}>
         <div style={{ textAlign: 'center', marginBottom: 60 }}>
           <span style={{
             display: 'inline-block', background: '#F0FDF4', color: '#4CAF50',
@@ -495,6 +514,13 @@ export default function Landing() {
         </div>
       </section>
 
+      <LanguagesSection />
+      <RoadmapSection />
+      <WhySection />
+      <AccessSection />
+      <FaqSection />
+      <LandingSectionStyles />
+
       {/* ── CTA BANNER ── */}
       <section className="cta-banner" style={{
         padding: '90px 5%', textAlign: 'center',
@@ -503,19 +529,23 @@ export default function Landing() {
         <h2 style={{
           fontSize: 'clamp(1.8rem,4vw,2.8rem)', fontWeight: 800,
           color: '#fff', marginBottom: 16,
-        }}>Ready to visualize your first algorithm?</h2>
+        }}>Ready to Visualize Your First Algorithm?</h2>
         <p style={{ color: 'rgba(255,255,255,.65)', fontSize: 17, marginBottom: 38 }}>
-          Free to start. No credit card required.
+          Start exploring data structures and understand your code, one step at a time.
         </p>
+        <div style={{ display: 'flex', gap: 14, justifyContent: 'center', alignItems: 'stretch', flexWrap: 'wrap' }}>
+        <a href="#demo" style={{ ...S.ctaSecondary, boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, padding: '16px 36px', fontSize: 16 }}>Try Interactive Demo</a>
         <Link to="/register" style={{
-          display: 'inline-block', padding: '16px 44px', borderRadius: 12,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box',
+          padding: '16px 44px', borderRadius: 12, border: '1.5px solid transparent',
           fontSize: 16, fontWeight: 700, color: '#fff',
           background: 'linear-gradient(135deg,#2E74B5,#4CAF50)',
           boxShadow: '0 8px 24px rgba(46,116,181,.45)',
           textDecoration: 'none',
         }} className="cta-link">
-          Create free account →
+          Create Free Account →
         </Link>
+        </div>
       </section>
 
       <SiteFooter />
@@ -547,12 +577,13 @@ export default function Landing() {
           .hero-visual { margin-top: 20px; }
         }
 
-        /* ── Nav: hamburger takes over below 768px ── */
-        @media (max-width: 768px) {
+        /* ── Nav: hamburger takes over below 1020px ── */
+        @media (max-width: 1020px) {
           .nav-links-desktop { display: none !important; }
           .nav-burger { display: flex !important; }
         }
-        @media (min-width: 769px) {
+        section[id] { scroll-margin-top: 64px; }
+        @media (min-width: 1021px) {
           .nav-mobile-drawer { display: none !important; }
         }
 
