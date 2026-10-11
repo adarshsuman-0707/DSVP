@@ -27,8 +27,45 @@ function brandHeader() {
 
 let _transporter = null;
 
+// Brevo HTTPS API transport (port 443). Render's free tier blocks SMTP ports
+// (25/465/587), so when BREVO_API_KEY is set we send over HTTPS instead.
+function parseFrom(from) {
+  const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(from || '');
+  return m ? { name: m[1].trim() || undefined, email: m[2].trim() } : { email: String(from || '').trim() };
+}
+
+function brevoTransport() {
+  return {
+    async sendMail({ from, to, subject, text, html }) {
+      const logoUrl = process.env.LOGO_URL;
+      // CID inline images aren't supported by the API: use a public URL, or drop the logo.
+      const body = logoUrl
+        ? html.replace(`cid:${LOGO_CID}`, logoUrl)
+        : html.replace(/<td style="vertical-align:middle;padding-right:12px;">\s*<img[^>]*cid:[^>]*>\s*<\/td>/, '');
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          sender: parseFrom(from),
+          to: [{ email: to }],
+          subject,
+          htmlContent: body,
+          textContent: text,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`Brevo API ${res.status}: ${await res.text()}`);
+    },
+  };
+}
+
 function getTransporter() {
   if (_transporter) return _transporter;
+
+  if (process.env.BREVO_API_KEY) {
+    _transporter = brevoTransport();
+    return _transporter;
+  }
 
   _transporter = nodemailer.createTransport({
     host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
@@ -51,7 +88,7 @@ function getTransporter() {
  */
 async function sendOtpEmail(toEmail, otp, expiresMin = 10) {
   const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER || process.env.BREVO_SENDER}>`;
   const html = `
     <div style="font-family:'Inter',Arial,sans-serif;max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
 ${brandHeader()}
@@ -95,7 +132,7 @@ ${brandHeader()}
 
 async function sendSignupOtpEmail(toEmail, otp, expiresMin = 10) {
   const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER || process.env.BREVO_SENDER}>`;
 
   const html = `
     <div style="font-family:'Inter',Arial,sans-serif;max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
@@ -158,7 +195,7 @@ ${brandHeader()}
  */
 async function sendAdminPasswordResetEmail(toEmail, fullName, resetLink) {
   const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER || process.env.BREVO_SENDER}>`;
 
   const html = baseWrapper(`
     <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Password Reset Request</h2>
@@ -214,7 +251,7 @@ async function sendAccountStatusEmail(status, toEmail, fullName) {
   const copy = STATUS_COPY[status];
   if (!copy) return;
   const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER || process.env.BREVO_SENDER}>`;
 
   const html = baseWrapper(`
     <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">${copy.heading}</h2>
@@ -246,7 +283,7 @@ const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
  */
 async function sendWelcomeCredentialsEmail(toEmail, fullName, tempPassword, expiresMin, loginUrl) {
   const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER || process.env.BREVO_SENDER}>`;
   const name = escapeHtml(fullName);
 
   const html = baseWrapper(`
@@ -290,7 +327,7 @@ async function sendWelcomeCredentialsEmail(toEmail, fullName, tempPassword, expi
 /** Security notice: a Google account was linked to an existing password account. */
 async function sendGoogleLinkedNoticeEmail(toEmail, fullName) {
   const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER || process.env.BREVO_SENDER}>`;
   const html = baseWrapper(`
     <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Google account linked</h2>
     <p style="font-size:14px;color:#64748b;margin:0;line-height:1.6;">
