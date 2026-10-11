@@ -158,7 +158,6 @@ test('a client that disconnects mid-run does not leave its program running or it
   const count = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dsvp_heap_py_')).length;
   const before = count();
   const ac = new AbortController();
-  const base = `http://127.0.0.1:${new URL(process.env.__BASE || 'http://x').port}`; void base;
   const pending = fetch(w.baseUrl() + '/execution/run', {
     method: 'POST', signal: ac.signal,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

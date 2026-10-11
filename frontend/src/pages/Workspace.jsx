@@ -1832,7 +1832,7 @@ function SpinnerIcon() {
 }
 
 /* ── Resizable Panels ── */
-function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying, theme = 'dark', input = null }) {
+function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying, theme = 'dark' }) {
   const [editorWidth, setEditorWidth] = useState(50); // Percentage
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef(null);

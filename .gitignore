@@ -27,3 +27,6 @@ dist-ssr
 *.sw?
 
 .fake
+# Python bytecode (generated when a script is imported rather than run)
+__pycache__/
+*.pyc

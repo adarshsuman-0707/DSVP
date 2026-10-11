@@ -110,7 +110,7 @@ function describeRoles(roles) {
 
 export default function HeapVisualizer({
   events = [], currentIndex = 0, theme = 'dark', runError = '', language = '',
-  heapInfo = null, userOutput = '', onSeek = null,
+  heapInfo = null, userOutput = '',
 }) {
   const pal = PALETTE[theme] || PALETTE.dark;
   const reduced = usePrefersReducedMotion();
@@ -215,16 +215,6 @@ export default function HeapVisualizer({
   const ranAndNoHeap = total === 0 && !runError;
   const out = userOutput || (total > 0 ? events[total - 1].userOutput : '') || '';
   const complexityKey = view.complexityKey;
-
-  const timelineRef = useRef(null);
-  useEffect(() => {
-    const host = timelineRef.current;
-    const el = host && host.querySelector('[data-current="true"]');
-    if (el && host.scrollTo) {
-      const left = el.offsetLeft - host.clientWidth / 2 + el.clientWidth / 2;
-      host.scrollTo({ left: Math.max(0, left), behavior: reduced ? 'auto' : 'smooth' });
-    }
-  }, [currentIndex, reduced]);
 
   const KIND_ICON = { compare: '⇄', swap: '↕', write: '✎', insert: '＋', remove: '－', extract: '⤒', bulk: '≋', external: '⚑', init: '◉', call: '▸', return: '◂' };
 
