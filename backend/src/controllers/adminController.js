@@ -309,9 +309,13 @@ async function resetUserPassword(req, res, next) {
       .input('OtpCode', sql.VarChar(64), linkToken)
       .input('ExpiresAt', sql.DateTime2, expiresAt)
       .query(`
+        -- OUTPUT ... INTO a table variable: a bare OUTPUT is rejected (Msg 334) when the
+        -- target table has any enabled trigger (e.g. activity-log triggers).
+        DECLARE @out TABLE (OtpId INT);
         INSERT INTO dbo.PasswordResetOtp (Email, OtpCode, ExpiresAt)
-        OUTPUT INSERTED.OtpId
-        VALUES (@Email, @OtpCode, @ExpiresAt)
+        OUTPUT INSERTED.OtpId INTO @out (OtpId)
+        VALUES (@Email, @OtpCode, @ExpiresAt);
+        SELECT OtpId FROM @out;
       `);
     const otpId = insertRes.recordset[0].OtpId;
 
@@ -479,9 +483,13 @@ async function createModule(req, res, next) {
       .input('IsPremium',    sql.Bit,            requiredPlan !== 'free' ? 1 : 0)
       .input('SortOrder',    sql.Int,            sortOrder  || 0)
       .query(`
+        -- OUTPUT ... INTO a table variable: a bare OUTPUT is rejected (Msg 334) when the
+        -- target table has any enabled trigger (e.g. activity-log triggers).
+        DECLARE @out TABLE (ModuleId INT);
         INSERT INTO dbo.Modules (Name, Slug, Category, Description, RequiredPlan, IsPremium, SortOrder)
-        OUTPUT INSERTED.*
-        VALUES (@Name, @Slug, @Category, @Description, @RequiredPlan, @IsPremium, @SortOrder)
+        OUTPUT INSERTED.ModuleId INTO @out (ModuleId)
+        VALUES (@Name, @Slug, @Category, @Description, @RequiredPlan, @IsPremium, @SortOrder);
+        SELECT * FROM dbo.Modules WHERE ModuleId = (SELECT ModuleId FROM @out);
       `);
     const mod = result.recordset[0];
     await logAudit(req, { action: 'MODULE_UPDATED', targetType: 'module', targetId: mod.ModuleId, description: `Module "${name}" created (${requiredPlan})` });

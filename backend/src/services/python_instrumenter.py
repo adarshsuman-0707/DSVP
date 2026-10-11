@@ -1353,6 +1353,17 @@ def _node_val(node):
             v = getattr(node, attr)
             if not _is_node_like(v) and not _is_tree_node_like(v):
                 return v
+    # Payload with a user-chosen name (num, score, ...): first primitive
+    # attribute that is not a link/child field.
+    try:
+        for attr in _obj_attr_names(node):
+            if _TREE_NON_CHILD_RE.match(attr) or _TREE_LEFT_RE.match(attr) or _TREE_RIGHT_RE.match(attr):
+                continue
+            v = getattr(node, attr, None)
+            if isinstance(v, (int, float, str)) and not isinstance(v, bool):
+                return v
+    except Exception:
+        pass
     return '?'
 
 def _snapshot_chain(head, max_nodes=64):
@@ -1542,14 +1553,75 @@ _BST_LAST_REACHABLE = set() # id(node) → reachable from root as of last snapsh
 _BST_TOMBSTONED = set()     # id(node) → permanently deleted, never reconsidered
 
 
+_TREE_LEFT_RE  = re.compile(r'^(left|lft|l|lc|lchild|left_?child|left_?node|left_?ptr)$', re.I)
+_TREE_RIGHT_RE = re.compile(r'^(right|rgt|r|rc|rchild|right_?child|right_?node|right_?ptr)$', re.I)
+_TREE_VALUE_ATTRS = ('data', 'val', 'value', 'key', 'item')
+_TREE_NON_CHILD_RE = re.compile(r'^(next|prev|previous|nxt|parent|par|back|forward|fwd|_dsvp.*)$', re.I)
+_TREE_ATTR_CACHE = {}   # type -> (left_attr|None, right_attr|None); only positive results cached
+
+
+def _obj_attr_names(obj):
+    try:
+        return list(vars(obj).keys())
+    except TypeError:
+        names = []
+        for klass in type(obj).__mro__:
+            names.extend(getattr(klass, '__slots__', ()) or ())
+        return [n for n in names if hasattr(obj, n)]
+
+
+def _tree_attrs(obj):
+    """
+    Return (left_attr, right_attr) names for a binary-tree-node-like object,
+    or None. Naming is NOT assumed: the conventional left/right (and common
+    abbreviations) are honoured when present, otherwise the first two
+    self-referential child fields in assignment order are used as
+    (left, right). Never trusts non-user objects (str/int/containers).
+    """
+    if obj is None or isinstance(obj, (str, bytes, bytearray, int, float, bool, type,
+                                        list, tuple, dict, set, frozenset)):
+        return None
+    t = type(obj)
+    cached = _TREE_ATTR_CACHE.get(t)
+    if cached is not None:
+        return cached
+    names = _obj_attr_names(obj)
+    left = next((n for n in names if _TREE_LEFT_RE.match(n)), None)
+    right = next((n for n in names if _TREE_RIGHT_RE.match(n)), None)
+    if left is None and right is None:
+        cands = []
+        for n in names:
+            if n in _TREE_VALUE_ATTRS or _TREE_NON_CHILD_RE.match(n):
+                continue
+            v = getattr(obj, n, None)
+            if v is None or isinstance(v, t):
+                cands.append(n)
+        # need two child slots plus at least one other attribute (the payload)
+        if len(cands) >= 2 and len(names) > len(cands):
+            left, right = cands[0], cands[1]
+        else:
+            return None
+    result = (left, right)
+    _TREE_ATTR_CACHE[t] = result
+    return result
+
+
+def _tree_children(obj):
+    attrs = _tree_attrs(obj)
+    if attrs is None:
+        return None, None
+    l = getattr(obj, attrs[0], None) if attrs[0] else None
+    r = getattr(obj, attrs[1], None) if attrs[1] else None
+    return l, r
+
+
 def _is_tree_node_like(obj):
-    """Heuristic: has a 'left' or 'right' attribute — a binary tree node."""
-    return ((hasattr(obj, 'left') or hasattr(obj, 'right')) and
-            not isinstance(obj, (str, bytes, bytearray, int, float, bool, type)))
+    """Heuristic: a user-defined object with two child links — a binary tree node."""
+    return _tree_attrs(obj) is not None
 
 
 def _tree_reach_count(start, max_nodes=256):
-    """Count of nodes reachable from `start` via left/right (cycle-safe)."""
+    """Count of nodes reachable from `start` via its child links (cycle-safe)."""
     seen = set()
     stack = [start]
     while stack and len(seen) < max_nodes:
@@ -1557,8 +1629,9 @@ def _tree_reach_count(start, max_nodes=256):
         if cur is None or id(cur) in seen:
             continue
         seen.add(id(cur))
-        stack.append(getattr(cur, 'left', None))
-        stack.append(getattr(cur, 'right', None))
+        l, r = _tree_children(cur)
+        stack.append(l)
+        stack.append(r)
     return len(seen)
 
 
@@ -1576,8 +1649,7 @@ def _snapshot_tree(root, max_nodes=256):
         if cur is None or id(cur) in seen:
             continue
         seen.add(id(cur))
-        left = getattr(cur, 'left', None)
-        right = getattr(cur, 'right', None)
+        left, right = _tree_children(cur)
         nodes.append({
             "id":      id(cur),
             "val":     _node_val(cur),
@@ -1607,8 +1679,7 @@ def _find_tree_root(registry):
 
     pointed_at = set()
     for node in registry.values():
-        l = getattr(node, 'left', None)
-        r = getattr(node, 'right', None)
+        l, r = _tree_children(node)
         if l is not None:
             pointed_at.add(id(l))
         if r is not None:
@@ -1635,8 +1706,9 @@ def _find_tree_root(registry):
             if cur is None or id(cur) in reachable:
                 continue
             reachable.add(id(cur))
-            stack.append(getattr(cur, 'left', None))
-            stack.append(getattr(cur, 'right', None))
+            cl, cr = _tree_children(cur)
+            stack.append(cl)
+            stack.append(cr)
 
     for nid in list(registry.keys()):
         if nid not in reachable:
@@ -1688,7 +1760,8 @@ def _patch_tree_node_class(cls):
         _BST_REGISTRY[id(self)] = self
         if getattr(self, '_dsvp_in_init', False):
             return
-        if name in ('left', 'right'):
+        tree_attrs = _tree_attrs(self)
+        if tree_attrs is not None and name in tree_attrs:
             val_desc = f"Node({_node_val(value)})" if _is_tree_node_like(value) else ('None' if value is None else repr(value))
             _emit_bst("bst_update", id(self), f"node.{name} = {val_desc}", _BST_REGISTRY)
         elif name in ('data', 'val', 'value', 'key', 'item'):

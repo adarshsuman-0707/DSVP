@@ -7,6 +7,7 @@ import QueueVisualizer        from './QueueVisualizer';
 import StackQueueInfoPanel   from './StackQueueInfoPanel';
 import BSTVisualizer          from './BSTVisualizer';
 import AVLVisualizer          from './AVLVisualizer';
+import HeapVisualizer         from './HeapVisualizer';
 import GraphVisualizer        from './GraphVisualizer';
 import HashingVisualizer      from './HashingVisualizer';
 import CallStackPanel         from './CallStackPanel';
@@ -117,7 +118,7 @@ function isHashModule(slug) {
  * and shows CallStackPanel + ExecutionHistoryPanel (right panel).
  * Both horizontal (left/right) and vertical (call stack/history) resizing!
  */
-export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0, theme = 'dark', runError = '' }) {
+export default function VisualizationCanvas({ moduleSlug, event, totalSteps, allEvents = [], currentStep = 0, theme = 'dark', runError = '', language = '', heapInfo = null, onSeek = null, userOutput = '' }) {
   const palette = CANVAS_THEME[theme] || CANVAS_THEME.dark;
   const [rightPanelWidth, setRightPanelWidth] = useState(320);
   const [callStackHeight, setCallStackHeight] = useState(300);
@@ -465,6 +466,55 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
     return false;
   }, [moduleSlug, allEvents, event]);
 
+  // Heap module: its own two-view visualizer (tree + array) driven directly by the heap events.
+  if (moduleSlug === 'heap') {
+    const heapEvent = allEvents[Math.max(0, currentStep - 1)] ?? null;
+    const hv = heapEvent;
+    const heapLocals = hv ? Object.fromEntries([
+      ['size', hv.heapSize], ['root', hv.heapRoot], ['i', hv.i], ['j', hv.j],
+      ['data[i]', hv.vi], ['data[j]', hv.vj], ['value', hv.v],
+      ['comparisons', hv.comparisons], ['swaps', hv.swaps],
+    ].filter(([, x]) => x !== undefined && x !== null).map(([k, x]) => [k, String(x)])) : null;
+    const heapStack = hv ? (hv.func ? ['main', hv.func] : ['main']) : [];
+    return (
+      <div ref={containerRef} style={{ display: 'flex', height: '100%', minHeight: 0, userSelect: (isResizingH || isResizingV) ? 'none' : 'auto' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <HeapVisualizer
+            events={allEvents}
+            currentIndex={Math.max(0, currentStep - 1)}
+            theme={theme}
+            runError={runError}
+            language={language}
+            heapInfo={heapInfo}
+            userOutput={userOutput}
+            onSeek={onSeek}
+          />
+        </div>
+        <div onMouseDown={() => setIsResizingH(true)} style={{ width: 4, cursor: 'col-resize', flexShrink: 0, zIndex: 10, background: isResizingH ? 'rgba(76,175,80,.5)' : palette.border }} />
+        <div ref={rightPanelRef} style={{ width: rightPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', background: palette.panelBg }}>
+          <div style={{ height: callStackHeight, overflow: 'hidden' }}>
+            <CallStackPanel
+              callStack={heapStack}
+              currentFunc={hv?.func ?? (hv ? 'main' : null)}
+              returningFrame={null}
+              currentLine={hv?.currentLine ?? null}
+              sourceLine={null}
+              locals={heapLocals}
+              changedVars={[]}
+              type={heapEvent?.type ?? ''}
+              description={heapEvent?.description ?? ''}
+              theme={theme}
+            />
+          </div>
+          <div onMouseDown={() => setIsResizingV(true)} style={{ height: 4, cursor: 'row-resize', flexShrink: 0, zIndex: 10, background: isResizingV ? 'rgba(76,175,80,.5)' : palette.border }} />
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <ExecutionHistoryPanel events={allEvents} currentStep={currentStep} theme={theme} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!event) {
     return (
       <div 
@@ -477,7 +527,7 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
           ) : isAVLSession ? (
             <AVLVisualizer treeState={[]} theme={theme} />
           ) : isBSTSession ? (
-            <BSTVisualizer treeState={[]} theme={theme} />
+            <BSTVisualizer treeState={[]} runError={runError} language={language} theme={theme} />
           ) : isGraphSession ? (
             <GraphVisualizer graphNodes={[]} theme={theme} />
           ) : isStackSession ? (
@@ -604,6 +654,10 @@ export default function VisualizationCanvas({ moduleSlug, event, totalSteps, all
           />
         ) : isBSTSession ? (
           <BSTVisualizer
+            events={allEvents}
+            currentIndex={Math.max(0, currentStep - 1)}
+            runError={runError}
+            language={language}
             treeState={lastBSTStateRef.current}
             activeNodeId={lastBSTActiveRef.current}
             type={lastBSTTypeRef.current}

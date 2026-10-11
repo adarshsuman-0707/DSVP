@@ -18,6 +18,7 @@ const UserDetailPage = lazy(() => import('./components/AdminDashboard/UserDetail
 const PaymentHistory = lazy(() => import('./pages/PaymentHistory'));
 const SavedSnippets = lazy(() => import('./pages/SavedSnippets'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const Coins = lazy(() => import('./pages/Coins'));
 const Reports = lazy(() => import('./pages/Reports'));
 // import OverviewTab from './components/AdminDashboard/tabs/OverviewTab';
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/terms"   element={<LegalPage doc="terms" />} />
           <Route path="/cookies" element={<LegalPage doc="cookies" />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
        {/* <Route path="/over"  element={<OverviewTab />} /> */}
           {/* authenticated */}
           <Route path="/dashboard" element={

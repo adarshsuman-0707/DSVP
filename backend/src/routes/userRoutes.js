@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
 const { verifyToken } = require('../middleware/authMiddleware');
+const { changePasswordLimiter } = require('../middleware/rateLimitMiddleware');
+const { changePassword } = require('../controllers/authController');
 const UserModel = require('../models/userModel');
 const { sql, getPool } = require('../config/db');
 const FeedbackModel = require('../models/feedbackModel');
@@ -67,59 +68,9 @@ router.patch('/profile', verifyToken, async (req, res, next) => {
   }
 });
 
-// PATCH /api/users/password - Change password
-router.patch('/password', verifyToken, async (req, res, next) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: 'Current password and new password are required' });
-    }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'New password must be at least 6 characters' });
-    }
-    if (newPassword.length > 128) {
-      return res.status(400).json({ message: 'New password is too long' });
-    }
-
-    // Fetch current hash
-    const pool = await getPool();
-    const result = await pool.request()
-      .input('UserId', sql.Int, req.user.userId)
-      .query('SELECT PasswordHash FROM dbo.Users WHERE UserId = @UserId');
-
-    if (!result.recordset.length) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    const { PasswordHash } = result.recordset[0];
-    const match = await bcrypt.compare(currentPassword, PasswordHash);
-    if (!match) {
-      return res.status(400).json({ message: 'Current password is incorrect' });
-    }
-
-    // Prevent same password
-    const sameAsOld = await bcrypt.compare(newPassword, PasswordHash);
-    if (sameAsOld) {
-      return res.status(400).json({ message: 'New password must be different from current password' });
-    }
-
-    const newHash = await bcrypt.hash(newPassword, 12);
-    await pool.request()
-      .input('UserId',       sql.Int,           req.user.userId)
-      .input('PasswordHash', sql.NVarChar(255),  newHash)
-      .query(`
-        UPDATE dbo.Users
-        SET PasswordHash = @PasswordHash, UpdatedAt = SYSUTCDATETIME()
-        WHERE UserId = @UserId
-      `);
-
-    await UserModel.logEvent(req.user.userId, 'password_changed');
-    res.json({ message: 'Password changed successfully' });
-  } catch (err) {
-    next(err);
-  }
-});
+// PATCH /api/users/password - Change password. Same handler (policy, history,
+// session revocation, fresh token in the response) as POST /api/auth/change-password.
+router.patch('/password', verifyToken, changePasswordLimiter, changePassword);
 
 // POST /api/users/feedback - Submit feedback
 router.post('/feedback', verifyToken, async (req, res, next) => {
@@ -144,9 +95,13 @@ router.post('/feedback', verifyToken, async (req, res, next) => {
       .input('Subject', sql.NVarChar(200), subject.trim())
       .input('Message', sql.NVarChar(sql.MAX), message.trim())
       .query(`
+        -- OUTPUT ... INTO a table variable: a bare OUTPUT is rejected (Msg 334) when the
+        -- target table has any enabled trigger (e.g. activity-log triggers).
+        DECLARE @out TABLE (FeedbackId INT, CreatedAt DATETIME2);
         INSERT INTO dbo.Feedback (UserId, Subject, Message, Status)
-        OUTPUT INSERTED.FeedbackId, INSERTED.CreatedAt
-        VALUES (@UserId, @Subject, @Message, 'open')
+        OUTPUT INSERTED.FeedbackId, INSERTED.CreatedAt INTO @out (FeedbackId, CreatedAt)
+        VALUES (@UserId, @Subject, @Message, 'open');
+        SELECT FeedbackId, CreatedAt FROM @out;
       `);
 
     await UserModel.logEvent(req.user.userId, 'feedback_submitted', { feedbackId: result.recordset[0].FeedbackId });
@@ -234,9 +189,13 @@ router.post('/code-history/save', verifyToken, async (req, res, next) => {
       .input('Language', sql.VarChar(20), language)
       .input('Code', sql.NVarChar(sql.MAX), code)
       .query(`
+        -- OUTPUT ... INTO a table variable: a bare OUTPUT is rejected (Msg 334) when the
+        -- target table has any enabled trigger (e.g. activity-log triggers).
+        DECLARE @out TABLE (SnippetId INT, CreatedAt DATETIME2);
         INSERT INTO dbo.SavedSnippets (UserId, ModuleId, ModuleSlug, Title, Language, Code, CreatedAt, UpdatedAt)
-        OUTPUT INSERTED.SnippetId, INSERTED.CreatedAt
-        VALUES (@UserId, @ModuleId, @ModuleSlug, @Title, @Language, @Code, SYSUTCDATETIME(), SYSUTCDATETIME())
+        OUTPUT INSERTED.SnippetId, INSERTED.CreatedAt INTO @out (SnippetId, CreatedAt)
+        VALUES (@UserId, @ModuleId, @ModuleSlug, @Title, @Language, @Code, SYSUTCDATETIME(), SYSUTCDATETIME());
+        SELECT SnippetId, CreatedAt FROM @out;
       `);
 
     await UserModel.logEvent(req.user.userId, 'snippet_created', { snippetId: result.recordset[0].SnippetId });

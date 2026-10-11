@@ -1,0 +1,353 @@
+// --------- DSVP heap runtime (injected; reports what the program does to arrays/lists) ---------
+class DSVPHeap {
+    static int ln = 0;
+    static int events = 0;
+    static long bytes = 0;
+    static boolean truncated = false;
+    static final int SNAP_MAX = 256;
+    static final int MAX_EVENTS = Integer.getInteger("dsvp.heap.maxEvents", 40000);
+    static final long MAX_BYTES = Long.getLong("dsvp.heap.maxBytes", 12L * 1024 * 1024);
+    static final java.io.PrintStream OUT = System.err;
+    static final java.util.IdentityHashMap<Object, Integer> ids = new java.util.IdentityHashMap<>();
+    static final java.util.Set<Object> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    static int nextAid = 0;
+    static Object lastRet = null;
+    static boolean hasRet = false;
+    static final java.util.HashMap<String, Integer> lastSc = new java.util.HashMap<>();
+
+    // -- output --
+    static void w(String json) {
+        if (truncated) return;
+        if (events >= MAX_EVENTS || bytes >= MAX_BYTES) {
+            truncated = true;
+            OUT.println("DSVP_TRACE:{\"op\":\"hp_trunc\"}");
+            return;
+        }
+        String s = "DSVP_TRACE:" + json;
+        bytes += s.length();
+        events++;
+        OUT.println(s);
+    }
+
+    static String q(String s) {
+        StringBuilder b = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"': b.append("\\\""); break;
+                case '\\': b.append("\\\\"); break;
+                case '\n': b.append("\\n"); break;
+                case '\r': b.append("\\r"); break;
+                case '\t': b.append("\\t"); break;
+                default:
+                    if (c < 0x20) b.append(String.format("\\u%04x", (int) c)); else b.append(c);
+            }
+        }
+        return b.append('"').toString();
+    }
+
+    static String jv(Object o) {
+        if (o == null) return "null";
+        if (o instanceof Integer || o instanceof Long || o instanceof Short || o instanceof Byte) return o.toString();
+        if (o instanceof Double || o instanceof Float) {
+            double d = ((Number) o).doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) return q(String.valueOf(d));
+            return o.toString();
+        }
+        if (o instanceof Boolean) return o.toString();
+        if (o instanceof Character) return q(o.toString());
+        String s;
+        if (o instanceof String) s = (String) o;
+        else {
+            s = String.valueOf(o);
+            if (s.matches(".*@[0-9a-f]+$")) s = o.getClass().getSimpleName() + "#" + (System.identityHashCode(o) % 1000);
+        }
+        if (s.length() > 40) s = s.substring(0, 37) + "...";
+        return q(s);
+    }
+
+    static String shortStr(Object o) {
+        if (o == null) return "null";
+        String s;
+        if (o instanceof int[]) s = java.util.Arrays.toString((int[]) o);
+        else if (o instanceof long[]) s = java.util.Arrays.toString((long[]) o);
+        else if (o instanceof double[]) s = java.util.Arrays.toString((double[]) o);
+        else if (o instanceof char[]) s = java.util.Arrays.toString((char[]) o);
+        else if (o instanceof Object[]) s = java.util.Arrays.toString((Object[]) o);
+        else s = String.valueOf(o);
+        if (s.length() > 40) s = s.substring(0, 37) + "...";
+        return s;
+    }
+
+    static void ln(int n) { ln = n; }
+
+    // a loop / else-if condition is re-evaluated after the body ran: restore its own line first (at(n) && cond)
+    static boolean at(int n) { ln = n; return true; }
+
+    // -- array / list identity --
+    static int aid(Object a) {
+        Integer id = ids.get(a);
+        if (id == null) { id = ++nextAid; ids.put(a, id); }
+        return id;
+    }
+
+    static int lenOf(Object a) {
+        if (a instanceof int[]) return ((int[]) a).length;
+        if (a instanceof long[]) return ((long[]) a).length;
+        if (a instanceof double[]) return ((double[]) a).length;
+        if (a instanceof float[]) return ((float[]) a).length;
+        if (a instanceof char[]) return ((char[]) a).length;
+        if (a instanceof short[]) return ((short[]) a).length;
+        if (a instanceof byte[]) return ((byte[]) a).length;
+        if (a instanceof boolean[]) return ((boolean[]) a).length;
+        if (a instanceof Object[]) return ((Object[]) a).length;
+        if (a instanceof java.util.List) return ((java.util.List<?>) a).size();
+        return 0;
+    }
+
+    static Object elem(Object a, int i) {
+        if (a instanceof int[]) return ((int[]) a)[i];
+        if (a instanceof long[]) return ((long[]) a)[i];
+        if (a instanceof double[]) return ((double[]) a)[i];
+        if (a instanceof float[]) return ((float[]) a)[i];
+        if (a instanceof char[]) return ((char[]) a)[i];
+        if (a instanceof short[]) return ((short[]) a)[i];
+        if (a instanceof byte[]) return ((byte[]) a)[i];
+        if (a instanceof boolean[]) return ((boolean[]) a)[i];
+        if (a instanceof Object[]) return ((Object[]) a)[i];
+        if (a instanceof DSVPList) return ((DSVPList<?>) a).raw(i);
+        return ((java.util.List<?>) a).get(i);
+    }
+
+    static String snap(Object a) {
+        int n = Math.min(lenOf(a), SNAP_MAX);
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < n; i++) {
+            if (i > 0) b.append(',');
+            b.append(jv(elem(a, i)));
+        }
+        return b.append(']').toString();
+    }
+
+    static void reg(Object a) {
+        if (!seen.add(a)) return;
+        w("{\"op\":\"hp_new\",\"a\":" + aid(a) + ",\"k\":\"" + (a instanceof java.util.List ? "list" : "array") + "\",\"snap\":"
+                + snap(a) + ",\"len\":" + lenOf(a) + ",\"line\":" + ln + "}");
+    }
+
+    static void emitSet(Object a, int i, Object old, Object v) {
+        w("{\"op\":\"hp_set\",\"a\":" + aid(a) + ",\"i\":" + i + ",\"old\":" + jv(old) + ",\"v\":" + jv(v)
+                + ",\"snap\":" + snap(a) + ",\"len\":" + lenOf(a) + ",\"line\":" + ln + "}");
+    }
+
+    static void emitRs(Object a, String kind, int i, Object v) {
+        w("{\"op\":\"hp_rs\",\"a\":" + aid(a) + ",\"k\":\"" + kind + "\",\"i\":" + i + ",\"v\":" + jv(v)
+                + ",\"snap\":" + snap(a) + ",\"len\":" + lenOf(a) + ",\"line\":" + ln + "}");
+    }
+
+    // -- recent reads (provenance for comparisons) --
+    static final Object[] rArr = new Object[8];
+    static final int[] rIdx = new int[8];
+    static final Object[] rVal = new Object[8];
+    static final boolean[] rUsed = new boolean[8];
+    static int rPos = 0;
+
+    static void noteRead(Object a, int i, Object v) {
+        rArr[rPos] = a; rIdx[rPos] = i; rVal[rPos] = v; rUsed[rPos] = false;
+        rPos = (rPos + 1) & 7;
+    }
+
+    // -- comparison operands --
+    static final class Val {
+        double d; long l; boolean isInt; Object json; Object arr; int idx = -1; boolean prov; Object raw;
+    }
+
+    static Val mk(long l) { Val v = new Val(); v.l = l; v.d = l; v.isInt = true; v.json = l; return v; }
+    static Val mk(double d) { Val v = new Val(); v.d = d; v.isInt = false; v.json = d; return v; }
+
+    static Val v(int x) { return mk((long) x); }
+    static Val v(long x) { return mk(x); }
+    static Val v(double x) { return mk(x); }
+    static Val v(float x) { return mk((double) x); }
+    static Val v(char x) { Val r = mk((long) x); r.json = String.valueOf(x); return r; }
+    static Val v(Object o) {
+        if (o instanceof Integer || o instanceof Long || o instanceof Short || o instanceof Byte) { Val r = mk(((Number) o).longValue()); r.raw = o; return r; }
+        if (o instanceof Number) { Val r = mk(((Number) o).doubleValue()); r.raw = o; return r; }
+        if (o instanceof Character) { Val r = mk((long) ((Character) o).charValue()); r.json = o.toString(); r.raw = o; return r; }
+        Val r = new Val(); r.json = o; r.raw = o; r.d = 0; return r;
+    }
+
+    // direct array operand (index known exactly)
+    static Val vr(int[] a, int i) { Val r = v(a[i]); r.arr = a; r.idx = i; return r; }
+    static Val vr(long[] a, int i) { Val r = v(a[i]); r.arr = a; r.idx = i; return r; }
+    static Val vr(double[] a, int i) { Val r = v(a[i]); r.arr = a; r.idx = i; return r; }
+    static Val vr(float[] a, int i) { Val r = v(a[i]); r.arr = a; r.idx = i; return r; }
+    static Val vr(char[] a, int i) { Val r = v(a[i]); r.arr = a; r.idx = i; return r; }
+    static Val vr(short[] a, int i) { Val r = v((int) a[i]); r.arr = a; r.idx = i; return r; }
+    static Val vr(byte[] a, int i) { Val r = v((int) a[i]); r.arr = a; r.idx = i; return r; }
+    static <T> Val vr(T[] a, int i) { Val r = v((Object) a[i]); r.arr = a; r.idx = i; return r; }
+
+    // operand that the program took from an array/list earlier (a local like x = a[i]):
+    // attribute it to the most recent read of an equal value (the same read may be reused)
+    static Val p(Val x) { x.prov = true; match(x, false); return x; }
+
+    // operand read right here (list.get(i), compareTo arguments): each read is used once, so
+    // two equal values in one comparison are attributed to two different slots
+    static Val pg(Val x) { x.prov = true; match(x, true); return x; }
+
+    static void match(Val x, boolean consume) {
+        if (x.arr != null) return;
+        for (int k = 1; k <= 8; k++) {
+            int s = (rPos - k) & 7;
+            if (rArr[s] == null || (consume && rUsed[s])) continue;
+            if (same(x, rVal[s]) && rIdx[s] < lenOf(rArr[s]) && same(x, elem(rArr[s], rIdx[s]))) {
+                x.arr = rArr[s]; x.idx = rIdx[s];
+                if (consume) rUsed[s] = true;
+                return;
+            }
+        }
+    }
+
+    static boolean same(Val x, Object recent) {
+        if (recent == null) return false;
+        Val y = v(recent);
+        if (x.raw == null && !(recent instanceof Number) && !(recent instanceof Character)) return false;
+        return x.isInt == y.isInt && x.d == y.d && x.l == y.l;
+    }
+
+    static boolean cmp(Val a, Val b, String op) {
+        boolean res;
+        if (a.isInt && b.isInt) {
+            switch (op) {
+                case "<": res = a.l < b.l; break;
+                case "<=": res = a.l <= b.l; break;
+                case ">": res = a.l > b.l; break;
+                default: res = a.l >= b.l;
+            }
+        } else {
+            switch (op) {
+                case "<": res = a.d < b.d; break;
+                case "<=": res = a.d <= b.d; break;
+                case ">": res = a.d > b.d; break;
+                default: res = a.d >= b.d;
+            }
+        }
+        report(a, b, op, res ? "true" : "false");
+        return res;
+    }
+
+    static void report(Val a, Val b, String op, String res) {
+        if (a.arr == null && b.arr == null) return;
+        if (a.arr != null) reg(a.arr);
+        if (b.arr != null) reg(b.arr);
+        w("{\"op\":\"hp_cmp\",\"la\":" + (a.arr != null ? aid(a.arr) : "null") + ",\"li\":" + (a.arr != null ? a.idx : "null")
+                + ",\"ra\":" + (b.arr != null ? aid(b.arr) : "null") + ",\"ri\":" + (b.arr != null ? b.idx : "null")
+                + ",\"lv\":" + jv(a.json) + ",\"rv\":" + jv(b.json) + ",\"o\":" + q(op) + ",\"r\":" + res + ",\"line\":" + ln + "}");
+    }
+
+    // compareTo / Integer.compare - evaluated here so the operands can be reported
+    static int ct(Object a, Object b) {
+        @SuppressWarnings("unchecked") int r = ((Comparable<Object>) a).compareTo(b);
+        Val y = pg(v(b)); Val x = pg(v(a));   // reads happened left to right: claim the newest first
+        report(x, y, "compareTo", Integer.toString(r));
+        return r;
+    }
+
+    static int ic(int a, int b) {
+        int r = Integer.compare(a, b);
+        Val y = pg(v(b)); Val x = pg(v(a));
+        report(x, y, "compare", Integer.toString(r));
+        return r;
+    }
+
+    // -- reads --
+    static int rd(int[] a, int i) { int v = a[i]; noteRead(a, i, v); return v; }
+    static long rd(long[] a, int i) { long v = a[i]; noteRead(a, i, v); return v; }
+    static double rd(double[] a, int i) { double v = a[i]; noteRead(a, i, v); return v; }
+    static float rd(float[] a, int i) { float v = a[i]; noteRead(a, i, v); return v; }
+    static char rd(char[] a, int i) { char v = a[i]; noteRead(a, i, v); return v; }
+    static short rd(short[] a, int i) { short v = a[i]; noteRead(a, i, v); return v; }
+    static byte rd(byte[] a, int i) { byte v = a[i]; noteRead(a, i, v); return v; }
+    static boolean rd(boolean[] a, int i) { return a[i]; }
+    static <T> T rd(T[] a, int i) { T v = a[i]; noteRead(a, i, v); return v; }
+
+    // -- writes --
+    static int set(int[] a, int i, int v) { reg(a); int o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static long set(long[] a, int i, long v) { reg(a); long o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static double set(double[] a, int i, double v) { reg(a); double o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static float set(float[] a, int i, float v) { reg(a); float o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static char set(char[] a, int i, char v) { reg(a); char o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static short set(short[] a, int i, short v) { reg(a); short o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static byte set(byte[] a, int i, byte v) { reg(a); byte o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+    static boolean set(boolean[] a, int i, boolean v) { a[i] = v; return v; }
+    static <T> T set(T[] a, int i, T v) { reg(a); T o = a[i]; a[i] = v; emitSet(a, i, o, v); return v; }
+
+    // -- integer fields (possible logical-size counters) --
+    static void sc(String name, int v) {
+        Integer last = lastSc.get(name);
+        if (last != null && last == v) return;
+        lastSc.put(name, v);
+        w("{\"op\":\"hp_sc\",\"n\":" + q(name) + ",\"v\":" + v + ",\"line\":" + ln + "}");
+    }
+
+    // -- calls --
+    static int depth = 0;
+
+    static void enter(String f, Object... args) {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < args.length; i++) { if (i > 0) b.append(','); b.append(q(shortStr(args[i]))); }
+        b.append(']');
+        hasRet = false; lastRet = null;
+        w("{\"op\":\"hp_call\",\"f\":" + q(f) + ",\"d\":" + (depth++) + ",\"args\":" + b + ",\"line\":" + ln + "}");
+    }
+
+    static <T> T rv(T x) { lastRet = x; hasRet = true; return x; }
+
+    static void exit(String f) {
+        depth--;
+        String r = hasRet ? shortStr(lastRet) : "None";
+        hasRet = false; lastRet = null;
+        w("{\"op\":\"hp_ret\",\"f\":" + q(f) + ",\"d\":" + depth + ",\"r\":" + q(r) + ",\"line\":" + ln + "}");
+    }
+
+    static void capOutput(int cap) {
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            w("{\"op\":\"hp_err\",\"line\":" + ln + "}");
+            System.err.println("Exception in thread \"main\" " + e);
+        });
+        final java.io.PrintStream real = System.out;
+        System.setOut(new java.io.PrintStream(new java.io.OutputStream() {
+            long n = 0;
+            public void write(int b) throws java.io.IOException {
+                if (++n > cap) throw new java.io.IOException("Output limit exceeded (" + cap + " bytes)");
+                real.write(b);
+            }
+            public void flush() { real.flush(); }
+        }, true));
+    }
+}
+
+class DSVPList<E> extends java.util.ArrayList<E> {
+    DSVPList() { super(); }
+    DSVPList(int cap) { super(cap); }
+    DSVPList(java.util.Collection<? extends E> c) { super(c); }
+
+    Object raw(int i) { return super.get(i); }
+    @Override public E get(int i) { E v = super.get(i); DSVPHeap.noteRead(this, i, v); return v; }
+    @Override public E set(int i, E v) { DSVPHeap.reg(this); E o = super.set(i, v); DSVPHeap.emitSet(this, i, o, v); return o; }
+    @Override public boolean add(E v) { DSVPHeap.reg(this); boolean r = super.add(v); DSVPHeap.emitRs(this, "append", size() - 1, v); return r; }
+    @Override public void add(int i, E v) { DSVPHeap.reg(this); super.add(i, v); DSVPHeap.emitRs(this, "insert", i, v); }
+    @Override public E remove(int i) {
+        DSVPHeap.reg(this); E o = super.remove(i);
+        DSVPHeap.emitRs(this, i == size() ? "pop" : "remove", i, o);
+        return o;
+    }
+    @Override public boolean remove(Object o) {
+        DSVPHeap.reg(this); int i = indexOf(o); boolean r = super.remove(o);
+        if (r) DSVPHeap.emitRs(this, i == size() ? "pop" : "remove", i, o);
+        return r;
+    }
+    @Override public boolean addAll(java.util.Collection<? extends E> c) { DSVPHeap.reg(this); boolean r = super.addAll(c); DSVPHeap.emitRs(this, "extend", -1, null); return r; }
+    @Override public void clear() { DSVPHeap.reg(this); super.clear(); DSVPHeap.emitRs(this, "clear", -1, null); }
+    @Override public void sort(java.util.Comparator<? super E> c) { DSVPHeap.reg(this); super.sort(c); DSVPHeap.emitRs(this, "sort", -1, null); }
+}

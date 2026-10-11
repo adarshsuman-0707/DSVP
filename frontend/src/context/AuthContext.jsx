@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { getMe, loginUser, registerUser } from '../services/api';
+import { changeRequiredPassword, getMe, googleLoginRequest, loginUser, registerUser } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -35,6 +35,23 @@ export function AuthProvider({ children }) {
     return res.data.user;
   }, []);
 
+  // Google ID-token sign-in. Returns { user, created, linked, welcomeEmailSent }.
+  const googleLogin = useCallback(async (credential) => {
+    const res = await googleLoginRequest(credential);
+    localStorage.setItem('dsvp_token', res.data.token);
+    setUser(res.data.user);
+    return { user: res.data.user, ...res.data.google };
+  }, []);
+
+  // Mandatory / voluntary password change: the server revokes every older
+  // token and returns a fresh session, which replaces the stored one.
+  const completePasswordChange = useCallback(async (payload) => {
+    const res = await changeRequiredPassword(payload);
+    localStorage.setItem('dsvp_token', res.data.token);
+    setUser(res.data.user);
+    return res.data.user;
+  }, []);
+
   const register = useCallback(async (fullName, email, password) => {
     const res = await registerUser({ fullName, email, password });
     localStorage.setItem('dsvp_token', res.data.token);
@@ -64,8 +81,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, updateUser, loadUser }),
-    [user, loading, login, register, logout, updateUser, loadUser],
+    () => ({ user, loading, login, googleLogin, completePasswordChange, register, logout, updateUser, loadUser }),
+    [user, loading, login, googleLogin, completePasswordChange, register, logout, updateUser, loadUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

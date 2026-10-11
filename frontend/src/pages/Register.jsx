@@ -3,8 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { signupSendOtp, signupVerifyOtp } from '../services/api';
 import AuthShell from '../components/auth/AuthShell';
+import NewPasswordFields from '../components/auth/NewPasswordFields';
+import { localProblems } from '../utils/passwordPolicy';
 import {
-  Field, TextInput, PasswordInput, Alert, PrimaryButton, Steps, OtpBoxes, useOtp, IconArrowLeft,
+  Field, TextInput, Alert, PrimaryButton, Steps, OtpBoxes, useOtp, IconArrowLeft,
 } from '../components/auth/authUi';
 
 /* ─────────────────────────────────────────────
@@ -59,21 +61,13 @@ export default function Register() {
 /* ─────────────────────────────────────────────
    STEP 1 — Registration form
 ───────────────────────────────────────────── */
-const STRENGTH_LABEL = ['', 'Weak', 'Good', 'Strong'];
-const STRENGTH_COLOR = ['', '#F87171', '#FBBF24', '#34D399'];
-
 function RegisterForm({ onDone }) {
   const [fullName, setFullName] = useState('');
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [showPw,   setShowPw]   = useState(false);
+  const [confirm,  setConfirm]  = useState('');
   const [error,    setError]    = useState('');
   const [loading,  setLoading]  = useState(false);
-
-  const pwStrength = password.length === 0 ? 0
-    : password.length < 6  ? 1
-    : password.length < 10 ? 2
-    : 3;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -83,9 +77,9 @@ function RegisterForm({ onDone }) {
     if (!fullName.trim() || fullName.trim().length < 2) {
       setError('Please enter your full name.'); return;
     }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.'); return;
-    }
+    const problems = localProblems(password);
+    if (problems.length) { setError('Your password doesn’t meet all the requirements yet.'); return; }
+    if (password !== confirm) { setError('Password and confirmation must match.'); return; }
 
     setLoading(true);
     try {
@@ -128,30 +122,10 @@ function RegisterForm({ onDone }) {
           )}
         </Field>
 
-        <Field label="Password">
-          {id => (
-            <>
-              <PasswordInput
-                id={id} name="new-password" value={password} required
-                autoComplete="new-password" placeholder="At least 6 characters"
-                show={showPw} onToggle={() => setShowPw(p => !p)}
-                onChange={e => setPassword(e.target.value)}
-              />
-              {password.length > 0 && (
-                <div aria-live="polite">
-                  <div className="auth-strength">
-                    {[1, 2, 3].map(n => (
-                      <i key={n} style={pwStrength >= n ? { background: STRENGTH_COLOR[pwStrength] } : undefined} />
-                    ))}
-                  </div>
-                  <span className="auth-strength-label" style={{ color: STRENGTH_COLOR[pwStrength] }}>
-                    Password strength: {STRENGTH_LABEL[pwStrength]}
-                  </span>
-                </div>
-              )}
-            </>
-          )}
-        </Field>
+        <NewPasswordFields
+          label="Password" confirmLabel="Confirm password" placeholder="Create a strong password"
+          password={password} onPassword={setPassword} confirm={confirm} onConfirm={setConfirm} disabled={loading}
+        />
 
         <PrimaryButton loading={loading} label="Send verification code" loadingLabel="Sending code…" />
       </form>

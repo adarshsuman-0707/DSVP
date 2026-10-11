@@ -81,9 +81,13 @@ async function createOrder(req, res, next) {
       .input('CoinsRedeemed', sql.Int, coinsUsed || null)
       .input('DiscountAmount', sql.Decimal(10, 2), discount || null)
       .query(`
+        -- OUTPUT ... INTO a table variable: a bare OUTPUT is rejected (Msg 334) when the
+        -- target table has any enabled trigger (e.g. activity-log triggers).
+        DECLARE @out TABLE (PaymentId INT);
         INSERT INTO dbo.Payments (UserId, Provider, Amount, Currency, PlanName, Status, ProviderOrderId, Receipt, CoinsRedeemed, DiscountAmount)
-        OUTPUT INSERTED.PaymentId
-        VALUES (@UserId, @Provider, @Amount, @Currency, @PlanName, 'created', @ProviderOrderId, @Receipt, @CoinsRedeemed, @DiscountAmount)
+        OUTPUT INSERTED.PaymentId INTO @out (PaymentId)
+        VALUES (@UserId, @Provider, @Amount, @Currency, @PlanName, 'created', @ProviderOrderId, @Receipt, @CoinsRedeemed, @DiscountAmount);
+        SELECT PaymentId FROM @out;
       `);
 
     await UserModel.logEvent(req.user.userId, 'payment_initiated', { paymentId: result.recordset[0].PaymentId, plan, coinsUsed, discount });

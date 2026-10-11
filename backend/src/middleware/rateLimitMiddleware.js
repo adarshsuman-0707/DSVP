@@ -78,4 +78,86 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
-module.exports = { rateLimitExecution, LIMITS, WINDOW_MS };
+/**
+ * Generic fixed-window limiter for auth endpoints (login, Google, password
+ * change). In-memory like the execution limiter above (single Node process).
+ * `keyFn(req)` picks the bucket; responds 429 + Retry-After when exceeded.
+ */
+function createRateLimiter({ windowMs, max, keyFn, message = 'Too many attempts. Please try again later.' }) {
+  const hits = new Map(); // key -> { count, resetAt }
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, b] of hits) if (now >= b.resetAt) hits.delete(k);
+  }, windowMs).unref();
+
+  function limiter(req, res, next) {
+    const key = keyFn(req);
+    const now = Date.now();
+    let b = hits.get(key);
+    if (!b || now >= b.resetAt) {
+      b = { count: 0, resetAt: now + windowMs };
+      hits.set(key, b);
+    }
+    b.count += 1;
+    if (b.count > max) {
+      const retryAfter = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ message, code: 'RATE_LIMITED', retryAfterSeconds: retryAfter });
+    }
+    next();
+  }
+  limiter.reset = () => hits.clear();
+  return limiter;
+}
+
+const envInt = (name, d) => {
+  const n = parseInt(process.env[name], 10);
+  return Number.isFinite(n) && n > 0 ? n : d;
+};
+const AUTH_WINDOW_MS = envInt('AUTH_RATE_WINDOW_MIN', 15) * 60 * 1000;
+
+const loginLimiter = createRateLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: envInt('LOGIN_RATE_MAX', 10),
+  keyFn: (req) => `${req.ip}|${String(req.body?.email || '').trim().toLowerCase()}`,
+  message: 'Too many sign-in attempts. Please wait a few minutes and try again.',
+});
+const googleLimiter = createRateLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: envInt('GOOGLE_RATE_MAX', 30),
+  keyFn: (req) => req.ip,
+  message: 'Too many Google sign-in attempts. Please wait a few minutes and try again.',
+});
+const changePasswordLimiter = createRateLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: envInt('CHANGE_PASSWORD_RATE_MAX', 5),
+  keyFn: (req) => String(req.user?.userId || req.ip),
+  message: 'Too many password change attempts. Please wait a few minutes and try again.',
+});
+
+const byIpAndEmail = (req) => `${req.ip}|${String(req.body?.email || '').trim().toLowerCase()}`;
+const otpSendLimiter = createRateLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: envInt('OTP_SEND_RATE_MAX', 5),
+  keyFn: byIpAndEmail,
+  message: 'Too many code requests. Please wait a few minutes and try again.',
+});
+const otpVerifyLimiter = createRateLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: envInt('OTP_VERIFY_RATE_MAX', 10),
+  keyFn: byIpAndEmail,
+  message: 'Too many incorrect codes. Please wait a few minutes and try again.',
+});
+const resetPasswordLimiter = createRateLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: envInt('RESET_PASSWORD_RATE_MAX', 10),
+  keyFn: (req) => req.ip,
+  message: 'Too many reset attempts. Please wait a few minutes and try again.',
+});
+
+module.exports = {
+  otpSendLimiter, otpVerifyLimiter, resetPasswordLimiter,
+  rateLimitExecution, LIMITS, WINDOW_MS,
+  createRateLimiter, loginLimiter, googleLimiter, changePasswordLimiter,
+};

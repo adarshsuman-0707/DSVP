@@ -5,6 +5,7 @@ dsvp\LinkedListInstrumentVisitor.class
 dsvp\ArrayInstrumentVisitor.class
 dsvp\HashingInstrumentVisitor.class
 dsvp\StackFieldInstrumentVisitor.class
+dsvp\HeapInstrumenter$1.class
 dsvp\StackInstrumentVisitor.class
 dsvp\QueueInstrumentVisitor.class
 dsvp\RuntimeShim.class

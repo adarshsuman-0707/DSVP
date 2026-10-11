@@ -233,7 +233,85 @@ async function sendAccountStatusEmail(status, toEmail, fullName) {
   });
 }
 
+const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+/**
+ * Welcome email for a brand-new Google-created account. Carries the
+ * account identifier and a short-lived temporary password, for OPTIONAL
+ * password-based login (Google sign-in itself never needs it). The first
+ * password login forces a change. Never logged; sent once per account
+ * (resent only if the first delivery failed).
+ */
+async function sendWelcomeCredentialsEmail(toEmail, fullName, tempPassword, expiresMin, loginUrl) {
+  const transporter = getTransporter();
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const name = escapeHtml(fullName);
+
+  const html = baseWrapper(`
+    <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Welcome to DSVP</h2>
+    <p style="font-size:14px;color:#64748b;margin:0 0 20px;line-height:1.6;">
+      Hello ${name},<br/><br/>
+      Your DSVP account was created with your Google account. You can keep
+      signing in with <strong>Continue with Google</strong> — no password needed.
+      If you'd also like to sign in with email and password, use these details:
+    </p>
+    <div style="background:#f1f5f9;border-radius:12px;padding:20px;margin-bottom:20px;">
+      <div style="font-size:12px;color:#64748b;margin-bottom:2px;">Account (email)</div>
+      <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:14px;word-break:break-all;">${escapeHtml(toEmail)}</div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:2px;">Temporary password</div>
+      <div style="font-size:20px;font-weight:800;color:#1F4E79;font-family:monospace;letter-spacing:1px;word-break:break-all;">${escapeHtml(tempPassword)}</div>
+    </div>
+    <p style="font-size:13px;color:#64748b;margin:0 0 20px;line-height:1.6;">
+      This temporary password expires in <strong>${expiresMin} minutes</strong> and you'll be asked
+      to choose a new password the first time you use it. If it expires, use
+      <em>Forgot password</em> on the sign-in page.
+    </p>
+    ${loginUrl ? `<div style="text-align:center;margin-bottom:20px;">
+      <a href="${escapeHtml(loginUrl)}" style="display:inline-block;padding:12px 28px;border-radius:10px;
+        background:linear-gradient(135deg,#2E74B5,#1F4E79);color:#fff;font-weight:700;
+        font-size:14px;text-decoration:none;">Go to DSVP</a></div>` : ''}
+    <p style="font-size:13px;color:#94a3b8;margin:0;">
+      If you didn't create this account, ignore this email and contact support.
+    </p>
+  `);
+
+  await transporter.sendMail({
+    from,
+    to: toEmail,
+    subject: 'Welcome to DSVP — your account details',
+    text: `Hello ${fullName || ''},\n\nYour DSVP account was created with your Google account. You can keep signing in with "Continue with Google".\n\nTo also sign in with a password:\n  Account: ${toEmail}\n  Temporary password: ${tempPassword}\n\nThe temporary password expires in ${expiresMin} minutes and must be changed on first use. If it expires, use "Forgot password".\n\nIf you didn't create this account, ignore this email and contact support.`,
+    html,
+    attachments: [LOGO_ATTACHMENT],
+  });
+}
+
+/** Security notice: a Google account was linked to an existing password account. */
+async function sendGoogleLinkedNoticeEmail(toEmail, fullName) {
+  const transporter = getTransporter();
+  const from = process.env.SMTP_FROM || `"DSVP Platform" <${process.env.SMTP_USER}>`;
+  const html = baseWrapper(`
+    <h2 style="font-size:20px;font-weight:800;color:#1e293b;margin:0 0 8px;">Google account linked</h2>
+    <p style="font-size:14px;color:#64748b;margin:0;line-height:1.6;">
+      Hello ${escapeHtml(fullName)},<br/><br/>
+      A Google account with this email address was just linked to your DSVP account, and
+      your other sessions were signed out. If this was you, no action is needed. If not,
+      reset your password right away with <em>Forgot password</em> and contact support.
+    </p>
+  `);
+  await transporter.sendMail({
+    from,
+    to: toEmail,
+    subject: 'Google account linked to your DSVP account',
+    text: `Hello ${fullName || ''},\n\nA Google account with this email address was just linked to your DSVP account and your other sessions were signed out. If this wasn't you, reset your password with "Forgot password" and contact support.`,
+    html,
+    attachments: [LOGO_ATTACHMENT],
+  });
+}
+
 module.exports = {
   sendOtpEmail, sendSignupOtpEmail,
   sendAdminPasswordResetEmail, sendAccountStatusEmail,
+  sendWelcomeCredentialsEmail, sendGoogleLinkedNoticeEmail,
 };

@@ -16,12 +16,13 @@ api.interceptors.request.use((config) => {
 // Session-invalidation codes the backend returns when a previously valid
 // JWT is no longer usable (account blocked/deactivated, or TokenVersion
 // bumped by an admin action) — see authMiddleware.verifyToken.
-const SESSION_INVALIDATION_CODES = new Set(['ACCOUNT_BLOCKED', 'ACCOUNT_DEACTIVATED', 'SESSION_INVALIDATED', 'INVALID_TOKEN']);
+const SESSION_INVALIDATION_CODES = new Set(['ACCOUNT_BLOCKED', 'ACCOUNT_DEACTIVATED', 'SESSION_INVALIDATED', 'INVALID_TOKEN', 'TEMP_PASSWORD_EXPIRED']);
 const SESSION_MESSAGE_BY_CODE = {
   ACCOUNT_BLOCKED: 'Your account has been blocked by the administrator.',
   ACCOUNT_DEACTIVATED: 'Your account has been deactivated by the administrator.',
   SESSION_INVALIDATED: 'Your session has ended because your account changed. Please log in again.',
   INVALID_TOKEN: 'Your session is no longer valid. Please log in again.',
+  TEMP_PASSWORD_EXPIRED: 'Your temporary password has expired. Use "Forgot password" to set a new one.',
 };
 
 // Global 401 handler: a request only reaches here with a token attached
@@ -32,6 +33,11 @@ const SESSION_MESSAGE_BY_CODE = {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Server-side gate for temp-password sessions: send them to the mandatory change page.
+    if (error.response?.status === 403 && error.response.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (window.location.pathname !== '/change-password') window.location.href = '/change-password';
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && localStorage.getItem('dsvp_token')) {
       const code = error.response.data?.code;
       const message = SESSION_MESSAGE_BY_CODE[code] || error.response.data?.message || 'Your session has ended. Please log in again.';
@@ -49,6 +55,11 @@ api.interceptors.response.use(
 export const registerUser = (data) => api.post('/auth/register', data);
 export const loginUser = (data) => api.post('/auth/login', data);
 export const getMe = () => api.get('/auth/me');
+
+// -------- Google sign-in / mandatory password change --------
+export const getGoogleNonce = () => api.get('/auth/google/nonce');
+export const googleLoginRequest = (credential) => api.post('/auth/google', { credential });
+export const changeRequiredPassword = (data) => api.post('/auth/change-password', data);
 
 // -------- Signup OTP --------
 export const signupSendOtp   = (email)                          => api.post('/auth/signup/send-otp',   { email });

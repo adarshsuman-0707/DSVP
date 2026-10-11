@@ -373,6 +373,191 @@ async function runCsharp(code) {
   }
 }
 
+/* ── Heap module runners (Python + Java) ─────────────────────────────── */
+/* Same restricted-child-process architecture as above (scrubbed env,
+   timeout, output caps, temp dir that is always removed) plus: stdin
+   support, cancellation via AbortSignal, a larger trace budget, and — for
+   Java — a pre-check compile of the user's ORIGINAL source so compile
+   errors point at the user's own line numbers. */
+
+const HEAP_PY = path.join(__dirname, 'heap', 'heap_instrumenter.py');
+const HEAP_RAW_EVENTS = Number(process.env.DSVP_HEAP_MAX_RAW_EVENTS) > 0 ? Number(process.env.DSVP_HEAP_MAX_RAW_EVENTS) : 40_000;
+const HEAP_TRACE_BYTES = 16 * 1024 * 1024;
+
+/** Start a child, feed it stdin (always closing it, so input() / Scanner never hang), await it. */
+function execWithInput(bin, args, options, stdin) {
+  const pr = execFileAsync(bin, args, options);
+  if (pr.child && pr.child.stdin) {
+    pr.child.stdin.on('error', () => { /* child exited before reading its input */ });
+    pr.child.stdin.end(typeof stdin === 'string' ? stdin : '');
+  }
+  return pr;
+}
+
+/** Resolves once the child process has really exited (after a kill, its cwd is still locked on Windows until then). */
+function exited(child, ms = 3000) {
+  return new Promise((resolve) => {
+    if (!child || child.exitCode !== null || child.signalCode) return resolve();
+    const t = setTimeout(resolve, ms);
+    child.once('exit', () => { clearTimeout(t); resolve(); });
+  });
+}
+
+function heapOptions(cwd, signal) {
+  return execOptions(cwd, { maxBuffer: HEAP_TRACE_BYTES, signal });
+}
+
+function aborted(err) {
+  return err && (err.code === 'ABORT_ERR' || err.name === 'AbortError');
+}
+
+const CANCELLED = {
+  status: 'cancelled', errorMessage: 'Run cancelled.', rawOutput: '', trace: { steps: [], userOutput: '' },
+};
+
+async function runHeapPython(code, { stdin, signal } = {}) {
+  const pythonBin = await findExecutable(['python', 'python3']);
+  if (!pythonBin) return notInstalled('Python', 'https://www.python.org/downloads/');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsvp_heap_py_'));
+  const file = path.join(dir, 'user_code.py');
+  fs.writeFileSync(file, code, 'utf8');
+  let pr;
+  try {
+    pr = execWithInput(pythonBin, ['-X', 'utf8', '-B', HEAP_PY, file], heapOptions(dir, signal), stdin);
+    const { stdout, stderr } = await pr;
+    return buildHeapSuccess(stdout, stderr);
+  } catch (err) {
+    if (aborted(err)) return CANCELLED;
+    return buildHeapError(err);
+  } finally {
+    await exited(pr && pr.child);
+    safeRmDir(dir);
+  }
+}
+
+/** Public top-level types are demoted to package-private WITHOUT changing line numbers. */
+function demotePublicKeepLines(code) {
+  return code.replace(/^([ \t]*)public[ \t]+(?=(?:(?:final|abstract|sealed|strictfp)[ \t]+)*(?:class|interface|enum|record)\b)/gm, '$1');
+}
+
+async function runHeapJava(code, { stdin, signal } = {}) {
+  const javaInfo = await findJava();
+  if (!javaInfo) return notInstalled('Java JDK', 'https://adoptium.net/');
+  const { java, javac } = javaInfo;
+  if (!fs.existsSync(INSTRUMENTER_JAVA_JAR)) {
+    return { status: 'compile_error', errorMessage: 'Java instrumenter is not available on this server. Please contact the administrator.', rawOutput: '', trace: { steps: [], userOutput: '' } };
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsvp_heap_java_'));
+  let pr;
+  try {
+    // 1. Compile the user's own program first: errors keep the user's line numbers.
+    const chkDir = path.join(dir, 'check');
+    fs.mkdirSync(chkDir);
+    fs.writeFileSync(path.join(chkDir, 'Main.java'), demotePublicKeepLines(code), 'utf8');
+    try {
+      await execFileAsync(javac, ['-encoding', 'UTF-8', '-proc:none', '-d', chkDir, path.join(chkDir, 'Main.java')],
+        execOptions(chkDir, { signal }));
+    } catch (err) {
+      if (aborted(err)) return CANCELLED;
+      return {
+        status: 'compile_error',
+        errorMessage: sanitizeForClient(sanitizeError(err.stderr || err.message || 'Compilation failed', 'java')),
+        rawOutput: '', trace: { steps: [], userOutput: '' },
+      };
+    }
+
+    // 2. Instrument (heap mode) and compile the instrumented program.
+    const userSrc = path.join(dir, 'UserCode.java');
+    fs.writeFileSync(userSrc, code, 'utf8');
+    let instrumented;
+    try {
+      const { stdout } = await execFileAsync(java, ['-jar', INSTRUMENTER_JAVA_JAR, '--heap', userSrc],
+        execOptions(dir, { maxBuffer: 8 * 1024 * 1024, signal, encoding: 'utf8' }));
+      instrumented = stdout;
+    } catch (err) {
+      if (aborted(err)) return CANCELLED;
+      return {
+        status: 'compile_error',
+        errorMessage: sanitizeForClient((err.stderr || err.message || 'Instrumentation failed').trim()),
+        rawOutput: '', trace: { steps: [], userOutput: '' },
+      };
+    }
+    const runDir = path.join(dir, 'run');
+    fs.mkdirSync(runDir);
+    const srcFile = path.join(runDir, 'Main.java');
+    fs.writeFileSync(srcFile, instrumented, 'utf8');
+    try {
+      await execFileAsync(javac, ['-encoding', 'UTF-8', '-proc:none', srcFile], execOptions(runDir, { signal }));
+    } catch (err) {
+      if (aborted(err)) return CANCELLED;
+      // The user's program compiled on its own, so this is the tracer's limit, not the user's mistake.
+      return {
+        status: 'unsupported_implementation',
+        errorMessage: 'Your program compiles, but the heap tracer cannot instrument one of its constructs safely, '
+          + 'so it was not run. Simplify the part of the code mentioned below (for example avoid very unusual generic or '
+          + 'lambda-heavy array code) or use a plain int[] / ArrayList heap.\n\n'
+          + sanitizeForClient(sanitizeError(err.stderr || err.message || '', 'java')).split('\n').slice(0, 6).join('\n'),
+        rawOutput: '', trace: { steps: [], userOutput: '' },
+      };
+    }
+
+    // 3. Run it.
+    const jvmArgs = [
+      `-Xmx${LIMITS.maxJavaHeapMb}m`, '-Xss4m', '-Dfile.encoding=UTF-8',
+      `-Ddsvp.maxOut=${LIMITS.maxOutputBytes}`, `-Ddsvp.heap.maxEvents=${HEAP_RAW_EVENTS}`,
+      '-cp', runDir, 'Main',
+    ];
+    pr = execWithInput(java, jvmArgs, heapOptions(runDir, signal), stdin);
+    const { stdout, stderr } = await pr;
+    return buildHeapSuccess(stdout, stderr);
+  } catch (err) {
+    if (aborted(err)) return CANCELLED;
+    return buildHeapError(err);
+  } finally {
+    await exited(pr && pr.child);
+    safeRmDir(dir);
+  }
+}
+
+function buildHeapSuccess(stdout, stderr) {
+  const traceData = parseTraceFromStdout(stderr || '', HEAP_RAW_EVENTS + 8);
+  const userOut = (stdout || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  return {
+    status: 'success', errorMessage: null, rawOutput: stdout,
+    trace: { steps: traceData.steps, userOutput: userOut, truncated: traceData.truncated },
+  };
+}
+
+function buildHeapError(err) {
+  const stderr = err.stderr || '';
+  const partial = parseTraceFromStdout(stderr, HEAP_RAW_EVENTS + 8);
+  const userOutput = sanitizeForClient((err.stdout || '').trim());
+  if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    return {
+      status: 'runtime_error',
+      errorMessage: 'Output or trace limit exceeded. The program printed or executed too much and was stopped. Check for an infinite loop.',
+      rawOutput: userOutput, trace: partial,
+    };
+  }
+  if (err.killed || err.signal === 'SIGTERM' || err.signal === 'SIGKILL') {
+    return {
+      status: 'runtime_error',
+      errorMessage: `Execution timed out (${Math.round(TIMEOUT_MS / 1000)} s limit). Check for infinite loops.`,
+      rawOutput: userOutput, trace: partial,
+    };
+  }
+  const isCompile = /SyntaxError|CompileError/.test(stderr);
+  // Java stack traces point into the instrumented file; keep only the exception line itself.
+  const message = sanitizeError(stderr, 'python').split('\n').filter((l) => !/^\s+at\s/.test(l)).join('\n');
+  return {
+    status: isCompile ? 'compile_error' : 'runtime_error',
+    errorMessage: sanitizeForClient(message) || 'The program failed.',
+    rawOutput: userOutput, trace: partial,
+  };
+}
+
 /* ── Main export ─────────────────────────────────────────────────────── */
 
 const RUNNERS = {
@@ -383,7 +568,20 @@ const RUNNERS = {
   csharp: runCsharp,
 };
 
-async function runCode({ language, code }) {
+const HEAP_RUNNERS = { python: runHeapPython, java: runHeapJava };
+
+async function runCode({ language, code, moduleSlug, stdin, signal }) {
+  if (moduleSlug === 'heap') {
+    const heapRunner = HEAP_RUNNERS[language];
+    if (!heapRunner) {
+      return {
+        status: 'compile_error',
+        errorMessage: 'The Heap module supports Python and Java.',
+        rawOutput: '', trace: { steps: [], userOutput: '' },
+      };
+    }
+    return heapRunner(code, { stdin, signal });
+  }
   const runner = SUPPORTED_LANGUAGES.includes(language) ? RUNNERS[language] : null;
   if (!runner) {
     return {
@@ -428,7 +626,9 @@ function buildError(err, language) {
   if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
     return {
       status:       'runtime_error',
-      errorMessage: 'Output limit exceeded. The program printed too much output and was stopped.',
+      errorMessage: (language === 'java' || language === 'python')
+        ? 'Output limit exceeded. The program printed or executed too much and was stopped — check for an infinite loop or runaway recursion.'
+        : 'Output limit exceeded. The program printed too much output and was stopped.',
       rawOutput:    '',
       trace:        parseTraceFromStdout(language === 'java' || language === 'python' ? (err.stderr || '') : (err.stdout || '')),
     };
@@ -517,7 +717,7 @@ function sanitizeError(stderr, language) {
     .join('\n');
 }
 
-function parseTraceFromStdout(stdout) {
+function parseTraceFromStdout(stdout, maxSteps = LIMITS.maxTraceSteps) {
   const steps   = [];
   const outputs = [];
   let truncated = false;
@@ -525,7 +725,7 @@ function parseTraceFromStdout(stdout) {
   for (const rawLine of stdout.split('\n')) {
     const line = rawLine.trim();
     if (line.startsWith('DSVP_TRACE:')) {
-      if (steps.length >= LIMITS.maxTraceSteps) { truncated = true; continue; }
+      if (steps.length >= maxSteps) { truncated = true; continue; }
       try {
         steps.push(JSON.parse(line.slice('DSVP_TRACE:'.length)));
       } catch (_) { /* malformed — skip */ }
@@ -542,7 +742,7 @@ function safeUnlink(f) {
 }
 
 function safeRmDir(d) {
-  try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {}
+  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }); } catch (_) {}
 }
 
 module.exports = { runCode };

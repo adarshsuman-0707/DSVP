@@ -50,9 +50,18 @@ public class JavaInstrumenter {
             System.exit(2);
         }
 
+        // `--heap` selects the heap module's instrumentation (see HeapInstrumenter);
+        // every other invocation behaves exactly as before.
+        boolean heapMode = false;
+        String srcPath = args[0];
+        for (String a : args) {
+            if (a.equals("--heap")) heapMode = true;
+            else if (!a.startsWith("--")) srcPath = a;
+        }
+
         String source;
         try {
-            source = Files.readString(Path.of(args[0]), StandardCharsets.UTF_8);
+            source = Files.readString(Path.of(srcPath), StandardCharsets.UTF_8);
         } catch (Exception e) {
             System.err.println("{\"error\":\"cannot read input file: " + escape(e.getMessage()) + "\"}");
             System.exit(2);
@@ -67,6 +76,11 @@ public class JavaInstrumenter {
             // extractErrorLine() regex in executionController.js still works.
             System.err.println(toJavacStyleError(e));
             System.exit(1);
+            return;
+        }
+
+        if (heapMode) {
+            printHeapInstrumented(cu);
             return;
         }
 
@@ -238,6 +252,41 @@ public class JavaInstrumenter {
             System.out.println(RuntimeShim.HASHTABLE_SOURCE);
         }
         System.out.print(rest.toString());
+    }
+
+    /** Heap module: user imports, then the heap runtime, then the user's program with heap reporting. */
+    private static void printHeapInstrumented(CompilationUnit cu) {
+        boolean hasMain = cu.findAll(MethodDeclaration.class).stream().anyMatch(JavaInstrumenter::isMainMethod);
+        if (!hasMain) {
+            System.err.println("Main.java:1: error: no `public static void main(String[] args)` method found");
+            System.exit(1);
+            return;
+        }
+        renameMainClassTo(cu, "Main");
+        demotoNonMainPublicTypes(cu, "Main");
+        HeapInstrumenter.apply(cu);
+
+        String shim;
+        try (java.io.InputStream in = JavaInstrumenter.class.getResourceAsStream("/dsvp/HeapShim.java.txt")) {
+            shim = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            System.err.println("{\"error\":\"heap runtime missing: " + escape(e.getMessage()) + "\"}");
+            System.exit(2);
+            return;
+        }
+
+        StringBuilder imports = new StringBuilder();
+        StringBuilder rest = new StringBuilder();
+        for (String line : cu.toString().split("\n")) {
+            if (line.trim().startsWith("import ")) imports.append(line).append("\n");
+            else rest.append(line).append("\n");
+        }
+        // always UTF-8 on stdout (javac is invoked with -encoding UTF-8), whatever the platform default is
+        java.io.PrintStream out = new java.io.PrintStream(new java.io.FileOutputStream(java.io.FileDescriptor.out), false, StandardCharsets.UTF_8);
+        out.print(imports);
+        out.println(shim);
+        out.print(rest);
+        out.flush();
     }
 
     /**

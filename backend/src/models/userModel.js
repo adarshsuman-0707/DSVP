@@ -119,6 +119,98 @@ const UserModel = {
       .input('PasswordHash', sql.NVarChar(255), passwordHash)
       .execute('sp_UpdateUserPasswordHash');
   },
+
+  /* ── Google sign-in / temporary password ── */
+  async createOAuthNonce(nonceHash, expiresAt) {
+    const pool = await getPool();
+    await pool.request()
+      .input('NonceHash', sql.Char(64), nonceHash)
+      .input('ExpiresAt', sql.DateTime2, expiresAt)
+      .execute('sp_OAuthNonceCreate');
+  },
+
+  // true only for the first caller presenting an unexpired nonce
+  async consumeOAuthNonce(nonceHash) {
+    const pool = await getPool();
+    const r = await pool.request().input('NonceHash', sql.Char(64), nonceHash).execute('sp_OAuthNonceConsume');
+    return r.recordset.length > 0;
+  },
+
+  async findByOAuthIdentity(provider, providerUserId) {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('Provider', sql.VarChar(20), provider)
+      .input('ProviderUserId', sql.NVarChar(255), providerUserId)
+      .execute('sp_FindUserByOAuthIdentity');
+    return r.recordset[0];
+  },
+
+  // Atomic find / link / create. Row includes Created and Linked flags.
+  async upsertGoogleUser({ sub, email, fullName, avatarUrl, passwordHash, tempPasswordExpiresAt }) {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('ProviderUserId', sql.NVarChar(255), sub)
+      .input('Email', sql.NVarChar(255), email)
+      .input('FullName', sql.NVarChar(150), fullName)
+      .input('AvatarUrl', sql.NVarChar(500), avatarUrl)
+      .input('PasswordHash', sql.NVarChar(255), passwordHash)
+      .input('TempPasswordExpiresAt', sql.DateTime2, tempPasswordExpiresAt)
+      .execute('sp_UpsertGoogleUser');
+    return r.recordset[0];
+  },
+
+  // Claims the right to (re)send credentials; true for exactly one caller.
+  async rotateTempPasswordForResend(userId, passwordHash, tempPasswordExpiresAt) {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('UserId', sql.Int, userId)
+      .input('PasswordHash', sql.NVarChar(255), passwordHash)
+      .input('TempPasswordExpiresAt', sql.DateTime2, tempPasswordExpiresAt)
+      .execute('sp_RotateTempPasswordForResend');
+    return r.recordset.length > 0;
+  },
+
+  async markWelcomeEmailSent(userId) {
+    const pool = await getPool();
+    await pool.request().input('UserId', sql.Int, userId).execute('sp_MarkWelcomeEmailSent');
+  },
+
+  async releaseWelcomeEmailClaim(userId) {
+    const pool = await getPool();
+    await pool.request().input('UserId', sql.Int, userId).execute('sp_ReleaseWelcomeEmailClaim');
+  },
+
+  async getPasswordRecord(userId) {
+    const pool = await getPool();
+    const r = await pool.request().input('UserId', sql.Int, userId).execute('sp_GetPasswordRecord');
+    return r.recordset[0];
+  },
+
+  // Password change / reset in one transaction: archives the old hash,
+  // clears temp-password state, bumps TokenVersion (kills every older JWT).
+  // oldPasswordHash is a compare-and-set guard (null for reset flows).
+  // Returns the updated user, or undefined if the guard failed / the account
+  // isn't active.
+  async completePasswordChange(userId, oldPasswordHash, newPasswordHash, historyKeep = 5) {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('UserId', sql.Int, userId)
+      .input('OldPasswordHash', sql.NVarChar(255), oldPasswordHash)
+      .input('NewPasswordHash', sql.NVarChar(255), newPasswordHash)
+      .input('HistoryKeep', sql.Int, historyKeep)
+      .execute('sp_CompletePasswordChange');
+    return r.recordset[0];
+  },
+
+  async getPasswordHistory(userId, count) {
+    if (!count) return [];
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('UserId', sql.Int, userId)
+      .input('Count', sql.Int, count)
+      .execute('sp_GetPasswordHistory');
+    return r.recordset.map((row) => row.PasswordHash);
+  },
 };
 
 module.exports = UserModel;

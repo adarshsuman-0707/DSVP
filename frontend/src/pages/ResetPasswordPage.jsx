@@ -2,6 +2,8 @@ import { useState } from 'react';
 import Logo from '../components/common/Logo';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { forgotResetPass } from '../services/api';
+import PasswordRequirements from '../components/common/PasswordRequirements';
+import { localProblems } from '../utils/passwordPolicy';
 
 const inputStyle = {
   width: '100%', padding: '11px 14px', borderRadius: 10,
@@ -43,7 +45,7 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     setError('');
     if (!token) { setError('This reset link is missing or invalid.'); return; }
-    if (newPw.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (localProblems(newPw).length) { setError('Your new password doesn’t meet all the requirements yet.'); return; }
     if (newPw !== confirmPw) { setError('Passwords do not match.'); return; }
     setLoading(true);
     try {
@@ -111,7 +113,7 @@ export default function ResetPasswordPage() {
                 <div style={{ position: 'relative' }}>
                   <input
                     type={showPw ? 'text' : 'password'} value={newPw} required
-                    placeholder="At least 6 characters"
+                    placeholder="At least 12 characters"
                     onChange={e => setNewPw(e.target.value)}
                     style={{ ...inputStyle, paddingRight: 44 }}
                     onFocus={focusStyle} onBlur={blurStyle}
@@ -122,6 +124,7 @@ export default function ResetPasswordPage() {
                   }}>{showPw ? '🙈' : '👁'}</button>
                 </div>
               </Field>
+              <PasswordRequirements password={newPw} />
               <Field label="Confirm New Password">
                 <input
                   type={showPw ? 'text' : 'password'} value={confirmPw} required

@@ -12,11 +12,16 @@ ALTER PROCEDURE dbo.sp_CreateUser
 AS
 BEGIN
   SET NOCOUNT ON;
+  -- OUTPUT ... INTO a table variable: a bare OUTPUT is rejected (Msg 334) when the
+  -- target table has ANY enabled trigger (e.g. an activity-log trigger).
+  DECLARE @out TABLE (UserId INT, FullName NVARCHAR(150), Email NVARCHAR(255), Role VARCHAR(20), IsPremium BIT, SubscriptionPlan NVARCHAR(20), SubscriptionExpiry DATETIME, PremiumModulesAccess NVARCHAR(MAX), TokenVersion INT);
   INSERT INTO dbo.Users (FullName, Email, PasswordHash, SubscriptionPlan)
   OUTPUT INSERTED.UserId, INSERTED.FullName, INSERTED.Email, INSERTED.Role, INSERTED.IsPremium,
          INSERTED.SubscriptionPlan, INSERTED.SubscriptionExpiry, INSERTED.PremiumModulesAccess,
          INSERTED.TokenVersion
+  INTO @out (UserId, FullName, Email, Role, IsPremium, SubscriptionPlan, SubscriptionExpiry, PremiumModulesAccess, TokenVersion)
   VALUES (@FullName, @Email, @PasswordHash, 'free');
+  SELECT UserId, FullName, Email, Role, IsPremium, SubscriptionPlan, SubscriptionExpiry, PremiumModulesAccess, TokenVersion FROM @out;
 END
 GO
 

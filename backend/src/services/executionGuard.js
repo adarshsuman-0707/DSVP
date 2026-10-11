@@ -20,6 +20,7 @@ const LIMITS = Object.freeze({
   maxOutputBytes: num(process.env.DSVP_MAX_OUTPUT_BYTES, 1024 * 1024),       // stdout/stderr each
   maxTraceSteps:  num(process.env.DSVP_MAX_TRACE_STEPS,  5_000),             // visualization events
   maxJavaHeapMb:  num(process.env.DSVP_MAX_JAVA_HEAP_MB, 256),
+  maxStdinBytes:  num(process.env.DSVP_MAX_STDIN_BYTES,  16 * 1024),         // program input
 });
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -46,7 +47,18 @@ function validateRunRequest(body) {
   if (typeof moduleSlug !== 'string' || !SLUG_RE.test(moduleSlug)) {
     return { ok: false, message: 'Invalid module.' };
   }
-  return { ok: true, value: { language, code, moduleSlug } };
+  // Optional program input (fed to stdin by the runners that support it).
+  let { stdin } = body;
+  if (stdin !== undefined && stdin !== null) {
+    if (typeof stdin !== 'string') return { ok: false, message: 'Input must be text.' };
+    if (Buffer.byteLength(stdin, 'utf8') > LIMITS.maxStdinBytes) {
+      return { ok: false, message: `Input exceeds the ${Math.round(LIMITS.maxStdinBytes / 1024)} KB limit.` };
+    }
+    if (stdin.includes('\0')) return { ok: false, message: 'Input contains invalid characters.' };
+  } else {
+    stdin = undefined;
+  }
+  return { ok: true, value: { language, code, moduleSlug, stdin } };
 }
 
 /**

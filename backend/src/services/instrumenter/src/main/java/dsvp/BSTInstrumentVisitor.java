@@ -21,11 +21,16 @@ import java.util.*;
  * LinkedListInstrumentVisitor but for two-child "left"/"right" pointers
  * instead of a single "next" chain:
  *
- * PASS A — detect TreeNode classes:
- *   A class counts as a "tree node class" if it has:
- *     - A field named "left" OR "right" of a self-referential type
- *       (TreeNode/Node/etc., or Object)
- *     - A field named "data", "val", "value", "key", or "item" (the payload)
+ * PASS A — detect TreeNode classes (field names are NOT assumed):
+ *   A class counts as a "tree node class" if it has two child links of its
+ *   own type (generic arguments erased, so Node<T> counts):
+ *     - names like left/right (and abbreviations such as l/r, lchild/rchild)
+ *       are honoured when present; otherwise the first two self-typed
+ *       fields in declaration order are (left, right). Link-style names
+ *       (next/prev/parent/...) are excluded
+ *     - the key is data/val/value/key/item if present, else the first
+ *       primitive/String/generic-typed field
+ *   The detected names are baked into the generated runtime helper.
  *
  * PASS B — instrument every method that uses tree-node variables:
  *   After a statement that assigns to a ".left"/".right" field, or
@@ -45,6 +50,18 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
 
     private final Set<String> nodeClassNames = new LinkedHashSet<>();
     private final Map<String, String> nodeValField = new HashMap<>();
+    // className -> {leftField, rightField}. Names are NOT assumed: the usual
+    // left/right (and abbreviations) are honoured, otherwise the first two
+    // self-typed child fields in declaration order are (left, right).
+    private final Map<String, String[]> nodeChildFields = new LinkedHashMap<>();
+    private final Set<String> childFieldNames = new LinkedHashSet<>();
+
+    private static final java.util.regex.Pattern LEFT_RE = java.util.regex.Pattern.compile(
+        "^(left|lft|l|lc|lchild|left_?child|left_?node|left_?ptr)$", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern RIGHT_RE = java.util.regex.Pattern.compile(
+        "^(right|rgt|r|rc|rchild|right_?child|right_?node|right_?ptr)$", java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern NON_CHILD_RE = java.util.regex.Pattern.compile(
+        "^(next|prev|previous|nxt|parent|par|back|forward|fwd)$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     private static final String HELPER = "_dsvpTraceBST";
 
@@ -67,38 +84,71 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
             if (cls.isInterface()) return;
             String className = cls.getNameAsString();
 
-            boolean hasChild = false;
-            String  valFld   = null;
+            // Self-typed fields in declaration order (generic arguments are
+            // erased so Node<T> counts as Node), excluding link-style names.
+            List<String> selfFields = new ArrayList<>();
+            String namedLeft = null, namedRight = null;
+            String valFld = null;
+            String firstPrimitive = null;
+            boolean hasNext = false;
+            Set<String> typeParams = new HashSet<>();
+            cls.getTypeParameters().forEach(tp -> typeParams.add(tp.getNameAsString()));
 
             for (FieldDeclaration fd : cls.getFields()) {
+                if (fd.isStatic()) continue;
                 for (VariableDeclarator vd : fd.getVariables()) {
                     String fname = vd.getNameAsString();
-                    String ftype = fd.getElementType().asString();
+                    String ftype = erase(fd.getElementType().asString());
+                    boolean selfTyped = ftype.equals(className) || nodeClassNames.contains(ftype);
 
-                    if (fname.equals("left") || fname.equals("right")) {
-                        if (ftype.equals(className) || ftype.equals("Object")
-                                || nodeClassNames.contains(ftype)) {
-                            hasChild = true;
-                        }
-                    }
-                    if (valFld == null && isValueField(fname)) {
-                        valFld = fname;
+                    if (fname.equals("next")) hasNext = true;
+
+                    if (selfTyped && !NON_CHILD_RE.matcher(fname).matches()) {
+                        selfFields.add(fname);
+                        if (namedLeft == null && LEFT_RE.matcher(fname).matches()) namedLeft = fname;
+                        if (namedRight == null && RIGHT_RE.matcher(fname).matches()) namedRight = fname;
+                    } else if (!selfTyped) {
+                        if (valFld == null && isValueField(fname)) valFld = fname;
+                        if (firstPrimitive == null && (isPayloadType(ftype) || typeParams.contains(ftype))) firstPrimitive = fname;
                     }
                 }
+            }
+
+            String left = namedLeft, right = namedRight;
+            if (left == null && right == null && selfFields.size() >= 2) {
+                left = selfFields.get(0);
+                right = selfFields.get(1);
             }
 
             // A class that ALSO declares "next" belongs to the linked-list
             // detector instead — keeps the two auto-detection systems from
             // ever double-firing on the same class.
-            boolean hasNext = cls.getFields().stream()
-                .flatMap(fd -> fd.getVariables().stream())
-                .anyMatch(vd -> vd.getNameAsString().equals("next"));
-
-            if (hasChild && !hasNext) {
+            if ((left != null || right != null) && !hasNext) {
                 nodeClassNames.add(className);
-                nodeValField.put(className, valFld != null ? valFld : "data");
+                nodeValField.put(className, valFld != null ? valFld : (firstPrimitive != null ? firstPrimitive : "data"));
+                nodeChildFields.put(className, new String[]{ left, right });
+                if (left != null) childFieldNames.add(left);
+                if (right != null) childFieldNames.add(right);
             }
         });
+    }
+
+    /** Strips generic arguments: "Node<T>" -> "Node". */
+    private static String erase(String type) {
+        int i = type.indexOf('<');
+        return i >= 0 ? type.substring(0, i).trim() : type.trim();
+    }
+
+    private static boolean isPayloadType(String t) {
+        switch (t) {
+            case "int": case "long": case "short": case "byte": case "char":
+            case "float": case "double": case "boolean":
+            case "Integer": case "Long": case "Short": case "Byte": case "Character":
+            case "Float": case "Double": case "String":
+                return true;
+            default:
+                return false;
+        }
     }
 
     private boolean isValueField(String name) {
@@ -146,13 +196,13 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
         Set<String> vars = new LinkedHashSet<>();
 
         m.getParameters().forEach(p -> {
-            if (nodeClassNames.contains(p.getType().asString())) {
+            if (nodeClassNames.contains(erase(p.getType().asString()))) {
                 vars.add(p.getNameAsString());
             }
         });
 
         m.findAll(VariableDeclarator.class).forEach(vd -> {
-            if (nodeClassNames.contains(vd.getType().asString())) {
+            if (nodeClassNames.contains(erase(vd.getType().asString()))) {
                 vars.add(vd.getNameAsString());
             }
         });
@@ -249,7 +299,7 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
         Expression target = ((AssignExpr) e).getTarget();
         if (!(target instanceof FieldAccessExpr)) return false;
         String field = ((FieldAccessExpr) target).getNameAsString();
-        return field.equals("left") || field.equals("right");
+        return childFieldNames.contains(field);
     }
 
     private boolean isNewNodeDecl(Statement stmt) {
@@ -257,7 +307,7 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
         Expression e = ((ExpressionStmt) stmt).getExpression();
         if (!(e instanceof VariableDeclarationExpr)) return false;
         VariableDeclarationExpr vde = (VariableDeclarationExpr) e;
-        String type = vde.getElementType().asString();
+        String type = erase(vde.getElementType().asString());
         if (!nodeClassNames.contains(type)) return false;
         return vde.getVariables().stream().anyMatch(vd ->
             vd.getInitializer().map(init -> init instanceof ObjectCreationExpr).orElse(false));
@@ -392,6 +442,31 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
             );
         }
 
+        // Per-class child/value field config baked in from the AST (no
+        // hardcoded names at runtime): {leftField, rightField, valueField}.
+        StringBuilder cfg = new StringBuilder();
+        cfg.append("private static String[] _dsvpTreeCfg(Object o) {\n")
+           .append("    Class<?> c = (o == null) ? null : o.getClass();\n")
+           .append("    while (c != null && c != Object.class) {\n")
+           .append("        String n = c.getSimpleName();\n");
+        for (Map.Entry<String, String[]> e : nodeChildFields.entrySet()) {
+            String[] cf = e.getValue();
+            cfg.append("        if (n.equals(\"").append(e.getKey()).append("\")) return new String[]{")
+               .append(cf[0] == null ? "null" : "\"" + cf[0] + "\"").append(", ")
+               .append(cf[1] == null ? "null" : "\"" + cf[1] + "\"").append(", \"")
+               .append(nodeValField.getOrDefault(e.getKey(), "data")).append("\"};\n");
+        }
+        cfg.append("        c = c.getSuperclass();\n")
+           .append("    }\n")
+           .append("    return null;\n")
+           .append("}\n")
+           .append("private static Object _dsvpTreeChild(Object o, int side) {\n")
+           .append("    String[] cf = _dsvpTreeCfg(o);\n")
+           .append("    if (cf == null || cf[side] == null) return null;\n")
+           .append("    return _dsvpGetField(o, cf[side]);\n")
+           .append("}\n");
+        helper.append(cfg);
+
         helper.append(
             // Count of nodes reachable from `start` walking left/right,
             // cycle-safe (a well-formed tree never cycles, but user code
@@ -410,8 +485,8 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "        if (cur == null || seen.contains(cur)) continue;\n" +
             "        seen.add(cur);\n" +
             "        n++;\n" +
-            "        Object l = _dsvpGetField(cur, \"left\");\n" +
-            "        Object r = _dsvpGetField(cur, \"right\");\n" +
+            "        Object l = _dsvpTreeChild(cur, 0);\n" +
+            "        Object r = _dsvpTreeChild(cur, 1);\n" +
             "        if (l != null) stack.push(l);\n" +
             "        if (r != null) stack.push(r);\n" +
             "    }\n" +
@@ -439,7 +514,7 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "        if (stickyLen >= bestLen) { bestLen = stickyLen; bestRoot = _dsvpStickyRootBST; }\n" +
             "    }\n" +
             "    for (Object candidate : _dsvpNodeIds.keySet()) {\n" +
-            "        if (!_dsvpHasField(candidate, \"left\", \"right\")) continue;\n" +
+            "        if (_dsvpTreeCfg(candidate) == null) continue;\n" +
             "        int len = _dsvpTreeReach(candidate);\n" +
             "        if (len > bestLen) { bestLen = len; bestRoot = candidate; }\n" +
             "    }\n" +
@@ -459,9 +534,10 @@ public class BSTInstrumentVisitor extends VoidVisitorAdapter<Void> {
             "        boolean isRoot = (Boolean) frame[1];\n" +
             "        if (cur == null || seen.contains(cur)) continue;\n" +
             "        seen.add(cur);\n" +
-            "        Object val   = _dsvpGetField(cur, \"data\",\"val\",\"value\",\"key\",\"item\");\n" +
-            "        Object left  = _dsvpGetField(cur, \"left\");\n" +
-            "        Object right = _dsvpGetField(cur, \"right\");\n" +
+            "        String[] cf = _dsvpTreeCfg(cur);\n" +
+            "        Object val   = (cf == null) ? null : _dsvpGetField(cur, cf[2]);\n" +
+            "        Object left  = _dsvpTreeChild(cur, 0);\n" +
+            "        Object right = _dsvpTreeChild(cur, 1);\n" +
             "        int id  = _dsvpGetId(cur);\n" +
             "        int lId = (left  != null) ? _dsvpGetId(left)  : -1;\n" +
             "        int rId = (right != null) ? _dsvpGetId(right) : -1;\n" +

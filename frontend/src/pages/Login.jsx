@@ -3,9 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { forgotSendOtp, forgotVerifyOtp, forgotResetPass } from '../services/api';
 import AuthShell from '../components/auth/AuthShell';
+import GoogleSignInButton from '../components/auth/GoogleSignInButton';
+import NewPasswordFields from '../components/auth/NewPasswordFields';
+import { localProblems } from '../utils/passwordPolicy';
 import {
   Field, TextInput, PasswordInput, Alert, PrimaryButton, Steps, OtpBoxes, useOtp,
-  IconArrowLeft, IconCheck, IconX,
+  IconArrowLeft, IconCheck,
 } from '../components/auth/authUi';
 
 /* ─────────────────────────────────────────────────────────
@@ -36,6 +39,7 @@ function LoginForm({ onForgot }) {
   const [showPw, setShowPw]     = useState(false);
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
+  const [notice, setNotice]     = useState('');
   const { login } = useAuth();
   const navigate  = useNavigate();
 
@@ -51,14 +55,27 @@ function LoginForm({ onForgot }) {
     } catch { /* ignore */ }
   }, []);
 
+  function handleGoogleSuccess(result) {
+    setError('');
+    if (result.created) {
+      setNotice(result.welcomeEmailSent
+        ? 'Account created. We emailed your account details — Google sign-in keeps working without a password.'
+        : 'Account created. Welcome to DSVP!');
+      setTimeout(() => navigate('/dashboard'), 1800);
+    } else {
+      navigate('/dashboard');
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (loading) return;            // no duplicate submissions
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
-      navigate('/dashboard');
+      const u = await login(email, password);
+      // Temporary-password sign-in: the server only allows a password change next.
+      navigate(u?.MustChangePassword ? '/change-password' : '/dashboard');
     } catch (err) {
       setError(err.response?.data?.message || 'Invalid email or password.');
     } finally {
@@ -74,6 +91,9 @@ function LoginForm({ onForgot }) {
       </div>
 
       <Alert message={error} />
+      {notice && (
+        <div className="auth-success" role="status"><IconCheck width={16} height={16} /><span>{notice}</span></div>
+      )}
 
       <form onSubmit={handleSubmit}>
         <Field label="Email address">
@@ -103,6 +123,9 @@ function LoginForm({ onForgot }) {
         <PrimaryButton loading={loading} label="Sign in" loadingLabel="Signing in…" />
       </form>
 
+      <div className="auth-divider" role="separator"><span>or</span></div>
+      <GoogleSignInButton onSuccess={handleGoogleSuccess} onError={setError} />
+
       <p className="auth-foot">
         New to DSVP? <Link to="/register" className="auth-link">Create an account</Link>
       </p>
@@ -120,7 +143,6 @@ function ForgotFlow({ onBack }) {
   const [resetToken, setResetToken] = useState('');
   const [newPw, setNewPw]           = useState('');
   const [confirmPw, setConfirmPw]   = useState('');
-  const [showPw, setShowPw]         = useState(false);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState('');
   const [resendSecs, setResendSecs] = useState(0);
@@ -192,7 +214,7 @@ function ForgotFlow({ onBack }) {
     e.preventDefault();
     if (loading) return;
     setError('');
-    if (newPw.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (localProblems(newPw).length) { setError('Your new password doesn’t meet all the requirements yet.'); return; }
     if (newPw !== confirmPw) { setError('Passwords do not match.'); return; }
     setLoading(true);
     try {
@@ -263,31 +285,9 @@ function ForgotFlow({ onBack }) {
 
       {step === 'reset' && (
         <form onSubmit={handleReset}>
-          <Field label="New password">
-            {id => (
-              <PasswordInput
-                id={id} name="new-password" value={newPw} required
-                autoComplete="new-password" placeholder="At least 6 characters"
-                show={showPw} onToggle={() => setShowPw(p => !p)}
-                onChange={e => setNewPw(e.target.value)}
-              />
-            )}
-          </Field>
-          <Field label="Confirm new password">
-            {id => (
-              <TextInput
-                id={id} type={showPw ? 'text' : 'password'} name="confirm-password" value={confirmPw} required
-                autoComplete="new-password" placeholder="Re-enter password"
-                onChange={e => setConfirmPw(e.target.value)}
-              />
-            )}
-          </Field>
-
-          {confirmPw && (
-            <p className={`auth-hint ${newPw === confirmPw ? 'ok' : 'bad'}`} aria-live="polite">
-              {newPw === confirmPw ? <><IconCheck width={14} height={14} />Passwords match</> : <><IconX />Passwords do not match</>}
-            </p>
-          )}
+          <NewPasswordFields
+            password={newPw} onPassword={setNewPw} confirm={confirmPw} onConfirm={setConfirmPw} disabled={loading}
+          />
 
           <PrimaryButton loading={loading} label="Reset password" loadingLabel="Resetting…" />
         </form>

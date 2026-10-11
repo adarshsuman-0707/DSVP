@@ -3,6 +3,8 @@ import AppShell from '../components/common/AppShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNavigate } from 'react-router-dom';
+import PasswordRequirements from '../components/common/PasswordRequirements';
+import { localProblems } from '../utils/passwordPolicy';
 import { updateProfile, changePassword, getCodeHistory, getActivityDays, loadCodeHistory, getMe } from '../services/api';
 import {
   Card, RichStat, ActivityHeatmap, LanguageDonut, TopicProgress,
@@ -78,42 +80,8 @@ function PasswordInput({ value, onChange, placeholder, disabled, T }) {
   );
 }
 
-/* ── password strength meter (client-side heuristic, no new deps) ── */
-function passwordStrength(pw) {
-  if (!pw) return { score: 0, label: '', color: '#e2e8f0' };
-  let score = 0;
-  if (pw.length >= 6) score++;
-  if (pw.length >= 10) score++;
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
-  if (/\d/.test(pw)) score++;
-  if (/[^A-Za-z0-9]/.test(pw)) score++;
-  const levels = [
-    { label: 'Very weak', color: '#E15759' },
-    { label: 'Weak', color: '#E15759' },
-    { label: 'Fair', color: '#F2A93B' },
-    { label: 'Good', color: '#3B82C4' },
-    { label: 'Strong', color: '#4CAF50' },
-    { label: 'Very strong', color: '#15803d' },
-  ];
-  return { score, ...levels[Math.min(score, levels.length - 1)] };
-}
-
 function StrengthMeter({ pw, T }) {
-  if (!pw) return null;
-  const { score, label, color } = passwordStrength(pw);
-  return (
-    <div style={{ marginTop: -10, marginBottom: 16 }}>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-        {[0, 1, 2, 3, 4].map(i => (
-          <div key={i} style={{
-            height: 4, flex: 1, borderRadius: 2,
-            background: i < score ? color : T.divider, transition: 'background 200ms',
-          }} />
-        ))}
-      </div>
-      <span style={{ fontSize: 11, fontWeight: 600, color }}>{label}</span>
-    </div>
-  );
+  return <PasswordRequirements password={pw} track={T.divider} muted={T.textMuted} ok="#4ade80" bad="#f87171" />;
 }
 
 function Alert({ type, message, T }) {
@@ -340,8 +308,8 @@ export default function Profile() {
       setPwAlert({ type: 'error', msg: 'Enter your current password.' });
       return;
     }
-    if (newPw.length < 6) {
-      setPwAlert({ type: 'error', msg: 'New password must be at least 6 characters.' });
+    if (localProblems(newPw).length) {
+      setPwAlert({ type: 'error', msg: 'Your new password doesn’t meet all the requirements yet.' });
       return;
     }
     if (newPw !== confirmPw) {
@@ -350,7 +318,9 @@ export default function Profile() {
     }
     setPwSaving(true);
     try {
-      await changePassword({ currentPassword: currentPw, newPassword: newPw });
+      const res = await changePassword({ currentPassword: currentPw, newPassword: newPw, confirmPassword: confirmPw });
+      // The server revokes every older session on a password change and returns a fresh token.
+      if (res.data?.token) localStorage.setItem('dsvp_token', res.data.token);
       setPwAlert({ type: 'success', msg: 'Password changed successfully!' });
       setCurrentPw(''); setNewPw(''); setConfirmPw('');
     } catch (err) {
@@ -546,7 +516,7 @@ export default function Profile() {
                 <Field label="Current Password" T={T}>
                   <PasswordInput value={currentPw} onChange={setCurrentPw} placeholder="Enter current password" disabled={pwSaving} T={T} />
                 </Field>
-                <Field label="New Password" hint="Minimum 6 characters." T={T}>
+                <Field label="New Password" hint="12+ characters with upper, lower, number and symbol. Passphrases welcome." T={T}>
                   <PasswordInput value={newPw} onChange={setNewPw} placeholder="Enter new password" disabled={pwSaving} T={T} />
                 </Field>
                 <StrengthMeter pw={newPw} T={T} />

@@ -17,6 +17,8 @@ export default function PlaybackBar({
   onStep,
   onScrub,
   onReset,
+  onLast,
+  onRestart,
   onSpeedChange,
   displayStep,
   displayTotal,
@@ -69,6 +71,24 @@ export default function PlaybackBar({
         disabled={currentStep >= totalSteps}
         label="Next step (→)"
       >⏭</CtrlBtn>
+
+      {/* jump to the last step (only for modules that provide it) */}
+      {onLast && (
+        <CtrlBtn
+          onClick={onLast}
+          disabled={currentStep >= totalSteps}
+          label="Jump to last step"
+        >⏭⏭</CtrlBtn>
+      )}
+
+      {/* replay from the beginning */}
+      {onRestart && (
+        <CtrlBtn
+          onClick={onRestart}
+          disabled={totalSteps === 0}
+          label="Restart playback from the first step"
+        >↻</CtrlBtn>
+      )}
 
       {/* scrubber */}
       <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center' }}>

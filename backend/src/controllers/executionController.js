@@ -3,6 +3,38 @@ const { runCode }         = require('../services/compilerService');
 const { buildTraceEvents, buildFailureEvent } = require('../services/traceGeneratorService');
 const CoinModel = require('../models/coinModel');
 const { validateRunRequest, sanitizeForClient } = require('../services/executionGuard');
+const { buildHeapEvents } = require('../services/heap/heapReconstructor');
+
+const HEAP_SLUG = 'heap';
+
+/** What the Heap module can and cannot observe, in words a learner can act on. */
+function heapUnsupportedMessage(reason, { language, code, info }) {
+  if (reason === 'too-large') {
+    return `The heap array has ${info.maxLen} elements; the visualizer supports up to 256. Use a smaller input.`;
+  }
+  const usesPQ = language === 'java' ? /\bPriorityQueue\b/.test(code) : /\b(PriorityQueue|queue\.PriorityQueue)\b/.test(code);
+  return [
+    'The program ran, but no array-based heap was observed.',
+    usesPQ
+      ? 'PriorityQueue hides its internal array, so it cannot be traced. Write the heap yourself with an array or list (heapq is supported in Python).'
+      : 'The tracer follows heaps stored in a Python list or a Java array / ArrayList (comparisons with < <= > >=, writes, append/pop/add/remove).',
+    'Make sure the program inserts into or rearranges a heap, and that comparisons use the heap\'s own elements. '
+      + 'Heaps built from linked nodes (left/right pointers) are not supported by this module.',
+  ].join('\n');
+}
+
+/** Last source line the program reached (for pointing at a runtime failure). */
+function lastHeapLine(rawSteps) {
+  for (let i = rawSteps.length - 1; i >= 0; i--) {
+    const s = rawSteps[i];
+    if (s.op === 'hp_err' && Number.isInteger(s.line) && s.line > 0) return s.line;
+  }
+  for (let i = rawSteps.length - 1; i >= 0; i--) {
+    const s = rawSteps[i];
+    if (Number.isInteger(s.line) && s.line > 0) return s.line;
+  }
+  return null;
+}
 
 /**
  * Best-effort insert into dbo.ExecutionTraces for one run (success or
@@ -56,10 +88,23 @@ async function runAndTrace(req, res, next) {
     if (!check.ok) {
       return res.status(400).json({ message: check.message });
     }
-    const { language, code, moduleSlug } = check.value;
+    const { language, code, moduleSlug, stdin } = check.value;
+    const isHeap = moduleSlug === HEAP_SLUG;
+
+    // A client that goes away (Stop button, a newer run, closed tab) must not leave
+    // its child process running: abort kills it.
+    const abort = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) abort.abort(); });
 
     /* ── 1. Execute ── */
-    const runResult = await runCode({ language, code });
+    const runResult = await runCode({ language, code, moduleSlug, stdin, signal: abort.signal });
+    if (runResult.status === 'cancelled') return;     // nobody is listening any more
+
+    if (isHeap && runResult.status === 'unsupported_implementation') {
+      return res.status(200).json({
+        status: 'unsupported_implementation', errorMessage: runResult.errorMessage, errorLine: null, events: [], userOutput: '',
+      });
+    }
 
     /* ── 2. Errors ── */
     if (runResult.status !== 'success') {
@@ -82,14 +127,26 @@ async function runAndTrace(req, res, next) {
       }
 
       // Even on runtime error there may be partial trace steps
-      const partialEvents = runResult.trace?.steps?.length
-        ? buildTraceEvents({
-            language,
-            rawTrace:   runResult.trace,
-            moduleSlug,
-            userOutput: runResult.trace.userOutput || '',
-          })
-        : [];
+      let heapInfo = null;
+      let partialEvents;
+      if (isHeap) {
+        const h = runResult.trace?.steps?.length ? buildHeapEvents(runResult.trace.steps) : { events: [] };
+        partialEvents = h.events || [];
+        heapInfo = h.info || null;
+        // Java runtime exceptions report lines of the instrumented file; the last observed line is the user's own.
+        if (language === 'java' && runResult.status === 'runtime_error' && runResult.trace?.steps?.length) {
+          errorLine = lastHeapLine(runResult.trace.steps) || errorLine;
+        }
+      } else {
+        partialEvents = runResult.trace?.steps?.length
+          ? buildTraceEvents({
+              language,
+              rawTrace:   runResult.trace,
+              moduleSlug,
+              userOutput: runResult.trace.userOutput || '',
+            })
+          : [];
+      }
 
       // Stack/Queue: turn EmptyStackException & co. into an explicit
       // UNDERFLOW/OVERFLOW step so the UI halts on the failing operation.
@@ -124,16 +181,35 @@ async function runAndTrace(req, res, next) {
         errorLine,
         events:       partialEvents,
         userOutput:   sanitizeForClient(runResult.rawOutput || ''),
+        ...(heapInfo ? { heapInfo } : {}),
       });
     }
 
     /* ── 3. Build events ── */
-    const events = buildTraceEvents({
-      language,
-      rawTrace:   runResult.trace,
-      moduleSlug,
-      userOutput: runResult.trace.userOutput || '',
-    });
+    let events;
+    let heapInfo = null;
+    if (isHeap) {
+      const h = buildHeapEvents(runResult.trace.steps || []);
+      if (h.error || !h.events.length) {
+        // The program ran fine; the module just could not see a heap in it. Say so plainly.
+        return res.status(200).json({
+          status: 'unsupported_implementation',
+          errorMessage: heapUnsupportedMessage(h.error || 'no-heap-array', { language, code, info: { maxLen: h.maxLen } }),
+          errorLine: null,
+          events: [],
+          userOutput: sanitizeForClient(runResult.trace.userOutput || ''),
+        });
+      }
+      events = h.events;
+      heapInfo = { ...h.info, traceTruncated: !!runResult.trace.truncated || h.info.truncated };
+    } else {
+      events = buildTraceEvents({
+        language,
+        rawTrace:   runResult.trace,
+        moduleSlug,
+        userOutput: runResult.trace.userOutput || '',
+      });
+    }
 
     /* ── 4. Persist (best-effort — don't fail the request if DB is down) ── */
     await persistTrace({
@@ -219,6 +295,7 @@ async function runAndTrace(req, res, next) {
       events,
       userOutput: sanitizeForClient(runResult.trace.userOutput || ''),
       traceTruncated: !!runResult.trace.truncated,
+      ...(heapInfo ? { heapInfo } : {}),
     });
 
   } catch (err) {

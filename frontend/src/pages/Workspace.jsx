@@ -7,8 +7,9 @@ import { runCode, getModules } from '../services/api';
 import { saveCodeHistory, getCodeHistory, loadCodeHistory, deleteCodeHistory, renameCodeHistory } from '../services/api';
 import { Modal, FormField, Input, Btn } from '../components/AdminDashboard/ui';
 import { useAuth } from '../context/AuthContext';
+import { HEAP_STARTER } from '../components/Visualization/heap/heapStarters';
 
-const LANGUAGES = ['python', 'cpp', 'java', 'c', 'csharp'];
+const LANGUAGES = ['python', 'java'];// ['python', 'cpp', 'java', 'c', 'csharp'];
 const FILE_EXT_BY_LANG = { python: 'py', cpp: 'cpp', java: 'java', c: 'c', csharp: 'cs' };
 const LANG_LABELS = { python: 'Python', cpp: 'C++', java: 'Java', c: 'C', csharp: 'C#' };
 
@@ -1173,6 +1174,7 @@ public class Main {
 `,
   },
 };
+STARTER.heap = HEAP_STARTER;
 
 // ── Module icons for dropdown ──
 const MODULE_ICONS = {
@@ -1236,6 +1238,10 @@ export default function Workspace() {
   const [errorLine, setErrorLine]       = useState(null);
   const [running, setRunning]           = useState(false);
   const abortControllerRef              = useRef(null);
+  // Heap module: observation notes from the server, and a run counter so a slow, superseded
+  // run can never overwrite the visualization of the current one.
+  const [heapInfo, setHeapInfo]          = useState(null);
+  const runIdRef                        = useRef(0);
   const [theme, setTheme] = useState(() => localStorage.getItem('dsvp_workspace_theme') || 'dark');
   useEffect(() => { localStorage.setItem('dsvp_workspace_theme', theme); }, [theme]);
   const T = THEME[theme];
@@ -1284,6 +1290,7 @@ export default function Workspace() {
     setErrorMessage('');
     setErrorLine(null);
     setUserOutput('');
+    setHeapInfo(null);
     setRunResetKey(k => k + 1);
   }
 
@@ -1322,13 +1329,18 @@ export default function Workspace() {
   }, [events]);
 
   async function handleRun() {
+    abortControllerRef.current?.abort();      // a new run supersedes any run still in flight
     clearRun();
     setRunning(true);
+    const runId = ++runIdRef.current;
     const controller = new AbortController();
     abortControllerRef.current = controller;
     try {
-      const res = await runCode({ language, code, moduleSlug }, { signal: controller.signal });
+      const payload = { language, code, moduleSlug };
+      const res = await runCode(payload, { signal: controller.signal });
+      if (runId !== runIdRef.current) return;   // stale response
       const data = res.data;
+      setHeapInfo(data.heapInfo || null);
 
       if (data.status !== 'success') {
         setErrorMessage(data.errorMessage || 'Execution failed.');
@@ -1347,6 +1359,7 @@ export default function Workspace() {
       /* Auto-play after a short delay so UI settles */
       setTimeout(() => setIsPlaying(true), 300);
     } catch (err) {
+      if (runId !== runIdRef.current) return;   // stale failure
       if (err.code === 'ERR_CANCELED' || err.name === 'CanceledError') {
         // User hit Stop — not an error, nothing to show.
       } else if (err.response?.status === 429) {
@@ -1360,8 +1373,10 @@ export default function Workspace() {
         setErrorMessage(err.response?.data?.message || 'Could not reach execution service.');
       }
     } finally {
-      setRunning(false);
-      abortControllerRef.current = null;
+      if (runId === runIdRef.current) {
+        setRunning(false);
+        abortControllerRef.current = null;
+      }
     }
   }
 
@@ -1375,6 +1390,7 @@ export default function Workspace() {
    *    (isPlaying=true): just stop the local playback timer.
    */
   function handleStop() {
+    runIdRef.current += 1;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -1723,7 +1739,11 @@ export default function Workspace() {
           currentStep={stepIndex}
           resetKey={runResetKey}
           runError={errorMessage}
+          language={language}
           theme={theme}
+          heapInfo={heapInfo}
+          onSeek={(i) => setStepIndex(Math.max(0, Math.min(i, events.length - 1)))}
+          userOutput={userOutput}
         />
 
         {/* History sidebar */}
@@ -1750,6 +1770,8 @@ export default function Workspace() {
         onStep={delta => setStepIndex(i => Math.min(Math.max(i + delta, 0), events.length - 1))}
         onScrub={step  => setStepIndex(step - 1)}
         onReset={() => { setIsPlaying(false); setStepIndex(0); }}
+        onLast={moduleSlug === 'heap' ? () => { setIsPlaying(false); setStepIndex(Math.max(0, events.length - 1)); } : undefined}
+        onRestart={moduleSlug === 'heap' ? () => { setStepIndex(0); setIsPlaying(true); } : undefined}
         onSpeedChange={setSpeed}
         displayStep={displayStep}
         displayTotal={displayTotal}
@@ -1810,7 +1832,7 @@ function SpinnerIcon() {
 }
 
 /* ── Resizable Panels ── */
-function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying, theme = 'dark' }) {
+function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, errorMessage, onDismissError, isPlaying, theme = 'dark', input = null }) {
   const [editorWidth, setEditorWidth] = useState(50); // Percentage
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef(null);
@@ -1899,7 +1921,7 @@ function EditorPanel({ language, code, setCode, editorCurrentLine, errorLine, er
   );
 }
 
-function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey, runError = '', theme = 'dark' }) {
+function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, currentStep, resetKey, runError = '', language = '', theme = 'dark', heapInfo = null, onSeek = null, userOutput = '' }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <PanelLabel theme={theme}>Visualization</PanelLabel>
@@ -1912,7 +1934,11 @@ function VisualizationPanel({ moduleSlug, currentEvent, totalSteps, allEvents, c
           allEvents={allEvents}
           currentStep={currentStep + 1}
           runError={runError}
+          language={language}
           theme={theme}
+          heapInfo={heapInfo}
+          onSeek={onSeek}
+          userOutput={userOutput}
         />
       </div>
     </div>
