@@ -284,12 +284,10 @@ async function sendOtp(req, res, next) {
     const expiresMin = otpMinutes();
     await OtpModel.create(normalizedEmail, otp, new Date(Date.now() + expiresMin * 60 * 1000));
 
-    try {
-      await sendOtpEmail(normalizedEmail, otp, expiresMin);
-    } catch (mailErr) {
-      // A delivery error must look identical to success, or it would reveal the account exists.
-      console.error('Password-reset OTP email failed:', mailErr.message);
-    }
+    // Not awaited: SMTP can take seconds, and the response must look identical either way
+    // (a delivery error must not reveal that the account exists).
+    sendOtpEmail(normalizedEmail, otp, expiresMin)
+      .catch(mailErr => console.error('Password-reset OTP email failed:', mailErr.message));
     await audit.record(req, 'password_reset_requested', { userId: user.UserId, meta: { known: true } });
 
     res.json(generic);
@@ -426,7 +424,9 @@ async function sendSignupOtp(req, res, next) {
     const expiresMin = otpMinutes();
     await OtpModel.create(normalizedEmail, 'S' + otpDigits, new Date(Date.now() + expiresMin * 60 * 1000));
 
-    await sendSignupOtpEmail(normalizedEmail, otpDigits, expiresMin);
+    // Not awaited so the response isn't held up by SMTP; the user can resend if it never arrives.
+    sendSignupOtpEmail(normalizedEmail, otpDigits, expiresMin)
+      .catch(mailErr => console.error('Signup OTP email failed:', mailErr.message));
 
     res.json({ message: 'OTP sent to your email.' });
   } catch (err) {
