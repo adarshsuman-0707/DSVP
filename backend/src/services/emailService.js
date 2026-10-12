@@ -32,6 +32,7 @@ function getTransporter() {
 
   _transporter = nodemailer.createTransport({
     service: 'gmail',
+    family: 4,                // Render can't reach Gmail over IPv6; force IPv4
     pool: true,               // reuse one SMTP connection instead of a new TLS handshake per mail
     maxConnections: 3,
     connectionTimeout: 10000, // fail fast instead of hanging

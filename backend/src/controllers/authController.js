@@ -424,9 +424,8 @@ async function sendSignupOtp(req, res, next) {
     const expiresMin = otpMinutes();
     await OtpModel.create(normalizedEmail, 'S' + otpDigits, new Date(Date.now() + expiresMin * 60 * 1000));
 
-    // Not awaited so the response isn't held up by SMTP; the user can resend if it never arrives.
-    sendSignupOtpEmail(normalizedEmail, otpDigits, expiresMin)
-      .catch(mailErr => console.error('Signup OTP email failed:', mailErr.message));
+    // Awaited so a delivery failure is reported instead of claiming the OTP was sent.
+    await sendSignupOtpEmail(normalizedEmail, otpDigits, expiresMin);
 
     res.json({ message: 'OTP sent to your email.' });
   } catch (err) {
